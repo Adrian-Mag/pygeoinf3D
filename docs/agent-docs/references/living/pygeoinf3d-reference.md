@@ -1,7 +1,77 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Volumetric kernel providers Phase 3 applied — slice visualization (plot.py) revised: type-safe imports, resolution validation, np.asarray coercion, all diagnostics resolved.
+> **Status:** Phase 4 documentation complete — canonical workflow documented, volumetric-only boundary stated in user-facing terms, test counts updated to 424, README refreshed.
 > **Last updated:** 2026-03-13
+
+---
+
+## Canonical Workflow
+
+The recommended end-to-end path from geometry to measurements:
+
+```python
+import numpy as np
+from pygeoinf import EuclideanSpace
+from pygeoinf3d import (
+    BoxDomain, Lebesgue3D, Function3D,
+    FunctionToKernelAdapter, SOLAOperator3D,
+)
+from pygeoinf3d.providers.function_providers import GaussianProvider3D
+from pygeoinf3d.plot import plot_function3d_axis_slice
+
+# 1. Domain and L² space
+box   = BoxDomain(np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0]))
+space = Lebesgue3D(box)
+
+# 2. Function providers  →  Function3D objects on demand
+centers  = np.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]])
+fprov    = GaussianProvider3D(box, centers=centers, sigmas=0.2)
+# Other choices: BumpProvider3D, BoxcarProvider3D
+
+# 3. Adapt to a KernelProvider3D  →  VolumeKernel3D objects on demand
+kprov = FunctionToKernelAdapter(fprov, space)
+# Alternatively build VolumeKernel3D objects explicitly and pass a list:
+#   from pygeoinf3d import VolumeKernel3D
+#   kernels = [VolumeKernel3D(space, fprov.get_function(i)) for i in range(fprov.dim)]
+
+# 4. SOLA measurement operator  A: Lebesgue3D → R^m
+op = SOLAOperator3D(space, EuclideanSpace(fprov.dim), kprov)
+
+# 5. Apply to a function  →  measurement vector
+#    Callable must handle (3,) single point → scalar and (n,3) batch → (n,)
+def f_callable(x):
+    x = np.asarray(x)
+    return np.exp(-np.sum(x**2, axis=-1))
+
+f    = Function3D(box, evaluate_callable=f_callable)
+meas = op(f)   # shape (2,) — one volume integral per kernel
+
+# 6. Optional: inspect a kernel on an axis slice
+plot_function3d_axis_slice(kprov.get_kernel(0).kernel, axis='z', coord=0.0)
+```
+
+**Volumetric-only boundary (current limitation):**
+All `VolumeKernel3D` instances compute integrals over 3D volumes using
+`Domain3D.integrate_volume`. The following kernel types are **not yet
+implemented**:
+- *Surface-integral kernels* — flux measurements or boundary data
+- *Line-integral kernels* — path-averaged seismic travel times
+- *Point-evaluation kernels* — seismometer point readings
+
+These require `LinearForm` subclasses that pair against boundary traces or
+point values rather than volumetric inner products. However, adding such
+non-volumetric kernels is **not** a drop-in extension with the current pipeline:
+
+- `KernelProvider3D.get_kernel` has return type `VolumeKernel3D`; a non-volumetric
+  `LinearForm` subclass would require updating this contract.
+- The sequence-backed `SOLAOperator3D` constructor enforces
+  `isinstance(kernel, VolumeKernel3D)` and rejects any other `LinearForm` subclass.
+- `Lebesgue3D.from_dual` only accepts `VolumeKernel3D`; the **adjoint mapping**
+  will need a parallel extension when non-volumetric duals are introduced.
+
+In summary, supporting non-volumetric kernels requires coordinated API and
+implementation changes across `KernelProvider3D`, `SOLAOperator3D`, and
+`Lebesgue3D.from_dual`.
 
 ---
 
@@ -19,7 +89,7 @@ pygeoinf3D/
 ├── README.md
 ├── pygeoinf3d/
 │   ├── __init__.py          # Re-exports all public API
-│   ├── plot.py              # Visualization (evaluate_slice, plot_slice) ← Phase 3
+│   ├── plot.py              # Visualization (evaluate_function3d_on_axis_slice, plot_function3d_axis_slice) ← Phase 3
 │   ├── core/
 │   │   ├── __init__.py
 │   │   ├── config.py        # AxisAlignedBoundingBox, CoordinateSystem
@@ -587,8 +657,8 @@ The forward and dual APIs are **representation-independent**: they work for any 
 The adjoint (`A†`) is **narrower**: it calls `domain.from_dual(xp)` to realise the dual element as a primal `Function3D`. `Lebesgue3D.from_dual` currently only accepts `VolumeKernel3D` instances that belong to the **same space instance**. Because `SOLAOperator3D.dual()` always returns a `VolumeKernel3D` on the same domain, the round-trip holds for all current usage — but only due to this alignment.
 
 Consequence for extensibility:
-- **Safe to generalise**: new kernel families (e.g. surface integrals, point evaluations) can be plugged in via a custom `KernelProvider3D` and will work directly with the forward and dual mappings.
-- **Requires care for adjoint**: if a future subclass changes the dual-mapping return type to something other than a `VolumeKernel3D`, `domain.from_dual` will raise `TypeError`. To support adjoint on such spaces, either override `adjoint` in the subclass or extend `Lebesgue3D.from_dual` to handle the new dual type.
+- **Non-trivial to generalise**: introducing new kernel families (e.g. surface integrals, point evaluations) requires coordinated API changes: (a) the `KernelProvider3D.get_kernel` return type is currently annotated as `VolumeKernel3D`; (b) the sequence-backed `SOLAOperator3D` constructor enforces `isinstance(kernel, VolumeKernel3D)` and rejects other `LinearForm` subclasses; and (c) the provider-backed constructor defers but would still fail at first access. Non-volumetric kernels therefore cannot be plugged in via the current pipeline without changing these type contracts.
+- **Adjoint also requires extension**: if the dual-mapping return type ever changes to something other than a `VolumeKernel3D`, `domain.from_dual` will raise `TypeError`. To support adjoint on such spaces, either override `adjoint` in the subclass or extend `Lebesgue3D.from_dual` to handle the new dual type.
 
 ---
 
@@ -985,7 +1055,8 @@ from pygeoinf3d import (
 | ~~SOLA 3~~ | ~~Provider-backed lazy kernel access in `SOLAOperator3D` via `KernelProvider3D` and `FunctionToKernelAdapter`~~ **DONE** |
 | ~~SOLA 4~~ | ~~Public API lock, export test, full reference update~~ **DONE** |
 | ~~kernel-providers 2~~ | ~~`GaussianProvider3D`, `BumpProvider3D`, `BoxcarProvider3D` under `function_providers`~~ **DONE** |
-| 4 | `Sobolev3D`, Bessel-Sobolev operators, and trace-ready structure on BoxDomain |
+| ~~Phase 4 docs~~ | ~~Canonical workflow, volumetric boundary statement, README refresh, test counts~~ **DONE** |
+| next | `Sobolev3D`, Bessel-Sobolev operators, and trace-ready structure on BoxDomain |
 | 5 | `BallDomain` (StructuredDomain3D, spherical coordinates) |
 | 6 | Dual elements and geometric distributions (point/path/surface/volume) |
 | 7 | End-to-end inversion workflow demo |
@@ -999,21 +1070,22 @@ Run with:
 conda run -n inferences3 python -m pytest tests/ -q
 ```
 
-**417 tests reported passing** (foundation Phases 1-3 + coefficient architecture Phases 1-2 + SOLA Phases 1-4 + kernel-providers Phase 2):
+**424 tests passing** (foundation Phases 1-3 + coefficient architecture Phases 1-2 + SOLA Phases 1-4 + kernel-providers Phases 1-2 + plot Phase 3):
 - `tests/core/test_config.py` — 13 tests
 - `tests/core/test_region.py` — 14 tests
 - `tests/core/test_domain_base.py` — 21 tests
 - `tests/core/test_boundary.py` — 8 tests
-- `tests/core/test_functions.py` — 37 tests  ← Phase 2
-- `tests/spaces/test_lebesgue.py` — 84 tests  ← Phase 2, extended Phase 4
+- `tests/core/test_functions.py` — 32 tests  ← Phase 2
+- `tests/spaces/test_lebesgue.py` — 72 tests  ← Phase 2
 - `tests/geometries/test_box_domain.py` — 45 tests  ← Phase 3
 - `tests/providers/test_tensor_product.py` — 28 tests  ← Phase 3
-- `tests/providers/test_function_providers.py` — 7 tests  ← kernel-providers Phase 1
-- `tests/providers/test_concrete_function_providers.py` — 69 tests  ← kernel-providers Phase 2
+- `tests/providers/test_function_providers.py` — 12 tests  ← kernel-providers Phase 1
+- `tests/providers/test_concrete_function_providers.py` — 70 tests  ← kernel-providers Phase 2
 - `tests/operators/test_box_laplacian.py` — 12 tests  ← Phase 3
 - `tests/representations/test_lebesgue_representation.py` — 22 tests  ← architecture Phase 1
 - `tests/representations/test_projection_backends.py` — 40 tests  ← architecture Phase 2
-- `tests/operators/test_sola.py` — 28 tests  ← SOLA Phases 1+2+3+4
+- `tests/operators/test_sola.py` — 29 tests  ← SOLA Phases 1+2+3+4
+- `tests/test_plot.py` — 6 tests  ← plot Phase 3
 
 ---
 

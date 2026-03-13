@@ -1,6 +1,9 @@
 # pygeoinf3D
 
-**pygeoinf3D** is a planned extension package providing concrete 3D function spaces, geometric domains, and differential operators built on top of [`pygeoinf`](../pygeoinf).
+**pygeoinf3D** is an extension package providing concrete 3D function spaces,
+geometric domains, and measurement operators built on top of
+[`pygeoinf`](../pygeoinf).  The current focus is **volumetric averaging kernels
+on box domains** and the `SOLAOperator3D` measurement operator.
 
 ## Architecture Overview
 
@@ -11,10 +14,26 @@ pygeoinf.Subset / EuclideanSpace(3)   ← semantic geometry (pygeoinf)
     └── Region3D                       ← thin geometric wrapper (pygeoinf3d.core.region)
             └── Domain3D               ← computational domain (pygeoinf3d.core.domain_base)
                     └── StructuredDomain3D   ← domains with natural grids/coords
+                            └── BoxDomain    ← implemented (tensor-product box)
 ```
 
-Function spaces (e.g. `Lebesgue3D`, `Sobolev3D`) will inherit from `pygeoinf.HilbertSpace`
-and be **defined on** a `Domain3D` — they are *not* domains themselves.
+Function spaces (`Lebesgue3D`, …) inherit from `pygeoinf.HilbertSpace` and are
+**defined on** a `Domain3D` — they are not domains themselves.
+
+## Implemented Features
+
+| Component | Class(es) | Notes |
+|-----------|-----------|-------|
+| Core geometry | `Region3D`, `Domain3D`, `StructuredDomain3D`, `Boundary3D` | Phase 1 |
+| Functions | `Function3D`, `Lebesgue3D`, `VolumeKernel3D` | Phase 2 |
+| Box geometry | `BoxDomain` | Phase 3, first concrete domain |
+| Spectral basis | `TensorProductProvider` | Dirichlet/Neumann box eigenfunctions |
+| Spectral operator | `BoxLaplacian` | −∇² on BoxDomain |
+| Function providers | `GaussianProvider3D`, `BumpProvider3D`, `BoxcarProvider3D` | Volumetric kernels |
+| Kernel adapter | `FunctionToKernelAdapter` | FunctionProvider3D → KernelProvider3D |
+| Measurement operator | `SOLAOperator3D` | Forward, dual, and adjoint |
+| Coefficient representations | `LebesgueRepresentation3D`, `OrthonormalProjectionBackend`, `GramProjectionBackend` | Finite-dim projection |
+| Visualization | `evaluate_function3d_on_axis_slice`, `plot_function3d_axis_slice` | Slice plots |
 
 ## Dependencies
 
@@ -25,29 +44,64 @@ and be **defined on** a `Domain3D` — they are *not* domains themselves.
 | Spherical   | pyshtools, Cartopy           | Optional   |
 | Heavy FEM   | FEniCS, dolfinx, ngsolve     | Deferred (v2+) |
 
-## Planned Phases
+## Volumetric-Only Boundary
 
-1. **Phase 1** — Package skeleton, `Region3D`, `Domain3D`, `StructuredDomain3D`, `Boundary3D`
-2. **Phase 2** — `Function3D` representation and `Lebesgue3D` Hilbert space
-3. **Phase 3** — `BoxDomain` (tensor-product, first geometry MVP)
-4. **Phase 4** — Sobolev/Bessel operators on box domains
-5. **Phase 5** — `BallDomain` (spherical coordinate support)
-6. **Phase 6** — First end-to-end inversion workflow
+All current kernel objects compute **3D volume integrals**.  Surface-integral,
+line-integral, and point-evaluation kernels are not yet implemented.  Adding
+non-volumetric kernels would require coordinated changes across the pipeline:
 
-## Quick Start (Phase 1 skeleton)
+- `KernelProvider3D.get_kernel` currently has return type `VolumeKernel3D`; a
+  new kernel family needs a compatible `LinearForm` subclass and updated type
+  contracts.
+- The sequence-backed `SOLAOperator3D` constructor enforces
+  `isinstance(kernel, VolumeKernel3D)` and will reject other `LinearForm`
+  subclasses outright.
+- `Lebesgue3D.from_dual` only accepts `VolumeKernel3D`; the **adjoint mapping**
+  requires a parallel extension here to support non-volumetric duals.
+
+In short, the current pipeline is volume-kernel-centric by design; non-volumetric
+kernels are not drop-in additions.
+
+## Quick Start
 
 ```python
 import numpy as np
-from pygeoinf import EuclideanSpace, Ball
-from pygeoinf3d.core.region import Region3D
-from pygeoinf3d.core.config import AxisAlignedBoundingBox
+from pygeoinf import EuclideanSpace
+from pygeoinf3d import (
+    BoxDomain, Lebesgue3D, Function3D,
+    FunctionToKernelAdapter, SOLAOperator3D,
+)
+from pygeoinf3d.providers.function_providers import GaussianProvider3D
+from pygeoinf3d.plot import plot_function3d_axis_slice
 
-space = EuclideanSpace(3)
-ball  = Ball(space, np.zeros(3), 1.0)
-bbox  = AxisAlignedBoundingBox(low=np.full(3, -1.0), high=np.full(3, 1.0))
-region = Region3D(ball, bounding_box=bbox)
+# 1. Domain and L² space
+box   = BoxDomain(np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0]))
+space = Lebesgue3D(box)
 
-print(region.ambient_space)       # EuclideanSpace(3)
-print(region.contains(np.zeros(3)))  # True
+# 2. Gaussian volume-averaging kernels
+centers = np.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]])
+fprov   = GaussianProvider3D(box, centers=centers, sigmas=0.2)
+kprov   = FunctionToKernelAdapter(fprov, space)
+
+# 3. SOLA measurement operator  A : Lebesgue3D → R^m
+op = SOLAOperator3D(space, EuclideanSpace(fprov.dim), kprov)
+
+# 4. Apply to a test function  → measurement vector
+#    Callable must handle (3,) single point → scalar and (n,3) batch → (n,)
+def f_callable(x):
+    x = np.asarray(x)
+    return np.exp(-np.sum(x**2, axis=-1))
+
+f    = Function3D(box, evaluate_callable=f_callable)
+meas = op(f)   # shape (2,) — one volume integral per kernel
+
+# 5. Inspect a kernel on an axis slice
+plot_function3d_axis_slice(kprov.get_kernel(0).kernel, axis='z', coord=0.0)
 ```
-# pygeoinf3D
+
+## Planned Next Steps
+
+- `Sobolev3D` / Bessel-Sobolev operators on `BoxDomain`
+- `BallDomain` (spherical coordinate support)
+- Surface-integral and point-evaluation kernel families
+- End-to-end inversion workflow demo
