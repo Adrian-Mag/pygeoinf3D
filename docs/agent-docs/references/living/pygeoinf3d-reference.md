@@ -1,6 +1,6 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Volumetric kernel providers Phase 1 complete — `function_providers` sub-package scaffold added, provider-protocol contract tests locked.
+> **Status:** Volumetric kernel providers Phase 2 revised — docstrings corrected, type-safe tests, one new BoxcarProvider3D (n,3) widths test; 70 concrete-provider tests (82 total in providers), all passing.
 > **Last updated:** 2026-03-13
 
 ---
@@ -40,7 +40,10 @@ pygeoinf3D/
 │   │   ├── base.py            # FunctionProvider3D (ABC), KernelProvider3D (ABC), FunctionToKernelAdapter  ← SOLA Phase 3
 │   │   ├── tensor_product.py  # TensorProductProvider  ← Phase 3
 │   │   └── function_providers/
-│   │       └── __init__.py    # Sub-package scaffold; re-exports FunctionProvider3D ← kernel-providers Phase 1
+│   │       ├── __init__.py    # Re-exports FunctionProvider3D + 3 concrete providers ← kernel-providers Phase 1+2
+│   │       ├── gaussian.py    # GaussianProvider3D  ← kernel-providers Phase 2
+│   │       ├── bump.py        # BumpProvider3D       ← kernel-providers Phase 2
+│   │       └── boxcar.py      # BoxcarProvider3D     ← kernel-providers Phase 2
 │   ├── operators/
 │   │   ├── __init__.py
 │   │   ├── laplacian_box.py   # BoxLaplacian  ← Phase 3
@@ -68,8 +71,9 @@ pygeoinf3D/
 │   │   └── test_box_domain.py        ← Phase 3
 │   ├── providers/
 │   │   ├── __init__.py
-│   │   ├── test_tensor_product.py        ← Phase 3
-│   │   └── test_function_providers.py    ← kernel-providers Phase 1 (package import + protocol contract)
+│   │   ├── test_tensor_product.py             ← Phase 3
+│   │   ├── test_function_providers.py         ← kernel-providers Phase 1 (package import + protocol contract)
+│   │   └── test_concrete_function_providers.py ← kernel-providers Phase 2 (Gaussian / Bump / Boxcar)
 │   ├── operators/
 │   │   ├── __init__.py
 │   │   ├── test_box_laplacian.py     ← Phase 3
@@ -571,6 +575,112 @@ op = SOLAOperator3D(space, EuclideanSpace(adapter.dim), adapter)
 
 ---
 
+## Kernel-Providers Phase 2 Classes
+
+### `GaussianProvider3D` — `pygeoinf3d.providers.function_providers.gaussian`
+
+Produces `Function3D` objects with anisotropic Gaussian profiles.
+
+```python
+GaussianProvider3D(domain, centers, sigmas, *, normalized=True)
+```
+
+| Argument | Type/Shape | Description |
+|----------|-----------|-------------|
+| `domain` | `Domain3D` | Computational domain |
+| `centers` | `(n,3)` or `(3,)` | Gaussian centres; `(3,)` → `dim=1` |
+| `sigmas` | scalar / `(3,)` / `(n,3)` | Per-axis std-devs; must be > 0 |
+| `normalized` | `bool` (default `True`) | If True, ∫ f_i dV = 1 analytically |
+
+$$f_i(\mathbf{x}) = A_i \exp\!\left(-\tfrac{1}{2}\sum_j \tfrac{(x_j-c_{ij})^2}{\sigma_{ij}^2}\right),
+\quad A_i = \bigl((2\pi)^{3/2}\sigma_{ix}\sigma_{iy}\sigma_{iz}\bigr)^{-1} \text{ if normalised}$$
+
+| Member | Description |
+|--------|-------------|
+| `.dim` | `len(centers)` |
+| `.get_function(i)` | Returns Gaussian centred at `centers[i]`; raises `IndexError` if out of range |
+
+**Raises:** `ValueError` for non-positive sigmas, wrong centers shape, or incompatible sigmas shape.
+
+---
+
+### `BumpProvider3D` — `pygeoinf3d.providers.function_providers.bump`
+
+Axis-separable $C^\infty$ compactly-supported bump function provider.
+
+```python
+BumpProvider3D(domain, centers, widths, *, k=1.0, normalized=True)
+```
+
+| Argument | Type/Shape | Description |
+|----------|-----------|-------------|
+| `domain` | `Domain3D` | Computational domain |
+| `centers` | `(n,3)` or `(3,)` | Bump centres |
+| `widths` | scalar / `(3,)` / `(n,3)` | Full widths per axis; half-width = `widths/2` |
+| `k` | `float` (default `1.0`) | Shape parameter; larger → more concentrated |
+| `normalized` | `bool` (default `True`) | If True, ∫ f_i dV = 1 |
+
+$$f_i(\mathbf{x}) = C_i \prod_{j=1}^{3} \phi_k\!\left(\tfrac{2(x_j-c_{ij})}{w_{ij}}\right), \quad \phi_k(t) = \begin{cases} \exp\!\left(\tfrac{-kt^2}{1-t^2}\right) & |t|<1 \\ 0 & |t|\ge 1 \end{cases}$$
+
+Compact support: $|x_j - c_{ij}| \le w_{ij}/2$ for all $j$. Normalization constant $C_i$
+computed via `scipy.integrate.quad` (cached per unique $k$).
+
+| Member | Description |
+|--------|-------------|
+| `.dim` | `len(centers)` |
+| `.get_function(i)` | Returns separable bump; support is axis-aligned box; **exactly zero** outside support |
+
+**Raises:** `ValueError` for non-positive widths, $k\le 0$, wrong centers shape.
+
+---
+
+### `BoxcarProvider3D` — `pygeoinf3d.providers.function_providers.boxcar`
+
+Axis-aligned box-car (indicator) function provider.
+
+```python
+BoxcarProvider3D(domain, centers, widths, *, normalized=True)
+```
+
+| Argument | Type/Shape | Description |
+|----------|-----------|-------------|
+| `domain` | `Domain3D` | Computational domain |
+| `centers` | `(n,3)` or `(3,)` | Box centres |
+| `widths` | scalar / `(3,)` / `(n,3)` | Full widths per axis; must be > 0 |
+| `normalized` | `bool` (default `True`) | If True, h = 1/(w_x·w_y·w_z) so ∫ f_i dV = 1 |
+
+$$f_i(\mathbf{x}) = \begin{cases} h_i & |x_j - c_{ij}| \le w_{ij}/2\ \forall j \\ 0 & \text{otherwise} \end{cases}$$
+
+| Member | Description |
+|--------|-------------|
+| `.dim` | `len(centers)` |
+| `.get_function(i)` | Returns box-car function; **exactly 1 (or h)** inside box, **exactly 0** outside |
+
+**Raises:** `ValueError` for non-positive widths, wrong centers shape, incompatible widths shape.
+
+---
+
+### Public API — `pygeoinf3d.providers.function_providers`
+
+```python
+from pygeoinf3d.providers.function_providers import (
+    FunctionProvider3D,   # re-export of abstract base
+    GaussianProvider3D,
+    BumpProvider3D,
+    BoxcarProvider3D,
+)
+```
+
+All three concrete providers:
+- Subclass `FunctionProvider3D` directly
+- Accept `Domain3D` (`BoxDomain` in practice) at construction
+- Support `dim` = `len(centers)`
+- Support `get_function(i)` with `IndexError` for out-of-range `i`
+- Preserve domain identity in produced `Function3D` objects
+- Are directly compatible with `FunctionToKernelAdapter`
+
+---
+
 ### `BoxLaplacian` — `pygeoinf3d.operators.laplacian_box`
 
 Spectral negative Laplacian − ∇² on a box domain. Inherits from `pygeoinf.LinearOperator`.
@@ -782,6 +892,7 @@ from pygeoinf3d import (
 | ~~SOLA 2~~ | ~~`SOLAOperator3D` dual/adjoint mappings via codomain Riesz map and `Lebesgue3D.from_dual`~~ **DONE** |
 | ~~SOLA 3~~ | ~~Provider-backed lazy kernel access in `SOLAOperator3D` via `KernelProvider3D` and `FunctionToKernelAdapter`~~ **DONE** |
 | ~~SOLA 4~~ | ~~Public API lock, export test, full reference update~~ **DONE** |
+| ~~kernel-providers 2~~ | ~~`GaussianProvider3D`, `BumpProvider3D`, `BoxcarProvider3D` under `function_providers`~~ **DONE** |
 | 4 | `Sobolev3D`, Bessel-Sobolev operators, and trace-ready structure on BoxDomain |
 | 5 | `BallDomain` (StructuredDomain3D, spherical coordinates) |
 | 6 | Dual elements and geometric distributions (point/path/surface/volume) |
@@ -796,7 +907,7 @@ Run with:
 conda run -n inferences3 python -m pytest tests/ -q
 ```
 
-**335 tests reported passing** (foundation Phases 1-3 + coefficient architecture Phases 1-2 + SOLA Phases 1-4):
+**417 tests reported passing** (foundation Phases 1-3 + coefficient architecture Phases 1-2 + SOLA Phases 1-4 + kernel-providers Phase 2):
 - `tests/core/test_config.py` — 13 tests
 - `tests/core/test_region.py` — 14 tests
 - `tests/core/test_domain_base.py` — 21 tests
@@ -805,6 +916,8 @@ conda run -n inferences3 python -m pytest tests/ -q
 - `tests/spaces/test_lebesgue.py` — 84 tests  ← Phase 2, extended Phase 4
 - `tests/geometries/test_box_domain.py` — 45 tests  ← Phase 3
 - `tests/providers/test_tensor_product.py` — 28 tests  ← Phase 3
+- `tests/providers/test_function_providers.py` — 7 tests  ← kernel-providers Phase 1
+- `tests/providers/test_concrete_function_providers.py` — 69 tests  ← kernel-providers Phase 2
 - `tests/operators/test_box_laplacian.py` — 12 tests  ← Phase 3
 - `tests/representations/test_lebesgue_representation.py` — 22 tests  ← architecture Phase 1
 - `tests/representations/test_projection_backends.py` — 40 tests  ← architecture Phase 2

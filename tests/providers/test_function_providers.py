@@ -79,7 +79,7 @@ class TestFunctionProvidersPackageImport:
             "function_providers must define __all__"
         )
         assert isinstance(mod.__all__, list)
-        assert mod.__all__ == ["FunctionProvider3D"]
+        assert "FunctionProvider3D" in mod.__all__
 
     def test_function_provider_3d_re_exported(self):
         """FunctionProvider3D must be accessible from the sub-package."""
