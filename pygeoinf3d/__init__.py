@@ -19,6 +19,9 @@ from .geometries.box.domain import BoxDomain
 from .providers.tensor_product import TensorProductProvider
 from .operators.laplacian_box import BoxLaplacian
 
+# SOLA operator — Phase 1: forward-only volume-kernel measurements
+from .operators.sola import SOLAOperator3D
+
 # Lebesgue coefficient architecture Phase 1 — representation boundary
 # Lebesgue coefficient architecture Phase 2 — Gram-aware backends
 from .representations import (
@@ -45,6 +48,8 @@ __all__ = [
     "BoxDomain",
     "TensorProductProvider",
     "BoxLaplacian",
+    # SOLA operator — Phase 1
+    "SOLAOperator3D",
     # Phase 4 — Representation boundary
     "CoefficientRepresentation3D",
     "LebesgueRepresentation3D",
