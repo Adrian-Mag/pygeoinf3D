@@ -238,6 +238,11 @@ class TensorProductProvider:
         return len(self._sorted_modes)
 
     @property
+    def box(self):
+        """The :class:`~pygeoinf3d.geometries.box.domain.BoxDomain`."""
+        return self._box
+
+    @property
     def bc_type(self) -> str:
         """Boundary condition type: ``'dirichlet'`` or ``'neumann'``."""
         return self._bc_type

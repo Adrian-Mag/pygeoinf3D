@@ -1,6 +1,6 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Phase 3 complete — BoxDomain, TensorProductProvider, BoxLaplacian.
+> **Status:** Phase 4 complete — continuous-first refactor applied.
 > **Last updated:** 2026-03-13
 
 ---
@@ -27,9 +27,11 @@ pygeoinf3D/
 │   │   ├── boundary.py      # Boundary3D
 │   │   └── functions.py     # Function3D  ← Phase 2
 │   ├── spaces/
-│   │   ├── __init__.py      # Re-exports Lebesgue3D, VolumeKernel3D
-│   │   ├── forms.py         # VolumeKernel3D  ← Phase 2
-│   │   └── lebesgue.py      # Lebesgue3D  ← Phase 2
+│   │   ├── __init__.py      # Re-exports Lebesgue3D, VolumeKernel3D, Sobolev3D,
+│   │   │                    #   SobolevKernel3D, SpectralSobolev3D
+│   │   ├── forms.py         # VolumeKernel3D, SobolevKernel3D  ← Phase 2/4
+│   │   ├── lebesgue.py      # Lebesgue3D  ← Phase 2
+│   │   └── sobolev.py       # Sobolev3D, SpectralSobolev3D  ← Phase 4
 │   ├── geometries/
 │   │   ├── __init__.py
 │   │   └── box/
@@ -40,7 +42,9 @@ pygeoinf3D/
 │   │   └── tensor_product.py  # TensorProductProvider  ← Phase 3
 │   └── operators/
 │       ├── __init__.py
-│       └── laplacian_box.py   # BoxLaplacian  ← Phase 3
+│       ├── laplacian_box.py   # BoxLaplacian  ← Phase 3
+│       └── bessel.py          # BesselOperator3D, SpectralBesselOperator3D,
+│                                #   bessel_direct, bessel_inverse  ← Phase 4
 ├── tests/
 │   ├── __init__.py
 │   ├── core/
@@ -52,7 +56,8 @@ pygeoinf3D/
 │   │   └── test_functions.py         ← Phase 2
 │   ├── spaces/
 │   │   ├── __init__.py
-│   │   └── test_lebesgue.py          ← Phase 2
+│   │   ├── test_lebesgue.py          ← Phase 2
+│   │   └── test_sobolev.py           ← Phase 4
 │   ├── geometries/
 │   │   ├── __init__.py
 │   │   └── test_box_domain.py        ← Phase 3
@@ -61,7 +66,8 @@ pygeoinf3D/
 │   │   └── test_tensor_product.py    ← Phase 3
 │   └── operators/
 │       ├── __init__.py
-│       └── test_box_laplacian.py     ← Phase 3
+│       ├── test_box_laplacian.py     ← Phase 3
+│       └── test_bessel.py            ← Phase 4
 └── docs/
     └── agent-docs/
         ├── active-plans/
@@ -351,6 +357,8 @@ Accepts either `BoxDomain(low, high)` or `BoxDomain(AxisAlignedBoundingBox(...))
 | `.volume_weights(resolution, location)` | `(N,)` quadrature weights summing exactly to `volume` |
 | `.integrate_volume(f, resolution, location)` | Tensor-product midpoint/trapezoidal quadrature |
 | `.integrate_volume_on_mesh(values, weights)` | `np.dot(values, weights)` |
+| `.sample_boundary(n, *, rng)` | Sample surface-area-uniform boundary points from 6 faces |
+| `.outward_normal(points, *, component)` | Outward unit normals; `component` pins a named face. **Semantically valid for boundary points only** — interior points silently receive nearest-face normal |
 | `.boundary` | `_BoxBoundary` — full surface |
 | `.boundary_components` | Dict `{'x_min','x_max','y_min','y_max','z_min','z_max'}` → `_BoxFaceBoundary` |
 
@@ -386,6 +394,7 @@ same structure with cosines and normalisation factor $1/\sqrt{L}$ for k=0.
 | Member | Description |
 |--------|-------------|
 | `.dim` | `nx * ny * nz` — total number of modes |
+| `.box` | The underlying `BoxDomain` (public accessor) |
 | `.get_multi_index(i)` | `(kx,ky,kz)` for flat index `i` |
 | `.get_index(multi_index)` | Flat index; raises `KeyError` if not in truncation |
 | `.get_eigenvalue(i)` | Eigenvalue λ = $(k_x\pi/L_x)^2 + (k_y\pi/L_y)^2 + (k_z\pi/L_z)^2$ |
@@ -417,7 +426,141 @@ pre-fetched and stored as a list for reuse across calls.
 
 ---
 
-## Public API (`pygeoinf3d.__init__`)
+## Phase 4 Classes
+
+### `Sobolev3D` — `pygeoinf3d.spaces.sobolev` (continuous-first public API)
+
+H^s Hilbert space on a box domain with **`Function3D` elements** (continuous-first design).
+Inherits from `pygeoinf.HilbertSpace`.  Dual elements are `SobolevKernel3D` forms.
+
+```python
+Sobolev3D(provider: TensorProductProvider, *, s: float, kappa: float = 1.0,
+          quad_resolution: int = 20)
+```
+
+Inner product: $\langle f, g \rangle_{H^s} = \sum_k (\kappa^2 + \lambda_k)^s \hat f_k \hat g_k$
+where $\hat f_k = \langle f, \phi_k \rangle_{L^2}$ is computed via pre-cached quadrature.
+
+| Member | Description |
+|--------|-------------|
+| `.dim` | `N = provider.dim` — optional spectral component dimension |
+| `.s` | Sobolev order |
+| `.kappa` | Mass-regularisation parameter |
+| `.quad_resolution` | Per-axis quadrature resolution (default 20) |
+| `.function_domain` | The underlying `BoxDomain` |
+| `.provider` | The `TensorProductProvider` |
+| `.eigenvalues` | Copy of $\lambda_k$ array, shape `(N,)` |
+| `.weights` | Copy of $(\kappa^2+\lambda_k)^s$ array, shape `(N,)` |
+| `.to_dual(f)` | `SobolevKernel3D(self, f)` — Riesz map for `Function3D` |
+| `.from_dual(xp)` | Recovers `xp.kernel` from own `SobolevKernel3D`; rejects others |
+| `.to_components(f)` | $L^2$ spectral coefficients via pre-cached quadrature, shape `(N,)` |
+| `.from_components(c)` | `Function3D` reconstructed from coefficient array |
+| `.project(f, *, quad_resolution)` | Alias for `to_components` with optional quad override |
+| `.inner_product(f, g)` | `to_dual(f)(g)` |
+| `.norm(f)` | `sqrt(inner_product(f, f))` |
+| `.is_element(x)` | `True` iff `x` is `Function3D` on this space's domain |
+| `.zero` | Constant-zero `Function3D` |
+| `.add/.subtract/.multiply/.negative` | Vector-space ops on `Function3D` |
+| `.supports_trace` | `True` iff `s > 0.5` |
+| `.assert_trace_allowed()` | Raises `RuntimeError` if `s <= 0.5` |
+
+Raises `ValueError` if `s < 0`, `kappa < 0`, or degenerate weights.
+
+**Internal pre-computation:**
+- `_quad_pts` — structured mesh `(Q, 3)` computed once at construction
+- `_quad_weights` — quadrature weights `(Q,)` computed once at construction
+- `_phi_vals` — `(N, Q)` matrix of eigenfunction values for fast `matmul` projection
+
+---
+
+### `SpectralSobolev3D` — `pygeoinf3d.spaces.sobolev` (secondary coefficient-vector API)
+
+Coefficient-vector Sobolev space $H^s$ on a box domain.  Elements are **numpy arrays of shape `(N,)`**.
+This was previously called `Sobolev3D` before the continuous-first refactor.
+
+```python
+SpectralSobolev3D(provider: TensorProductProvider, *, s: float, kappa: float = 1.0)
+```
+
+| Member | Description |
+|--------|-------------|
+| `.dim` | `N` = `provider.dim` |
+| `.to_components(c)` / `.from_components(c)` | Identity |
+| `.to_dual(c)` | `LinearForm(self, components=weights * c)` |
+| `.from_dual(xp)` | `xp.components / weights` |
+| `.inner_product(c1, c2)` | `sum(weights * c1 * c2)` |
+| `.is_element(c)` | `True` iff array-like shape `(N,)` |
+| `.project(f, *, quad_resolution)` | $L^2$ spectral coefficients via quadrature |
+| `.to_function(c)` | `Function3D` reconstructed from coefficients |
+| `.supports_trace` | `True` iff `s > 0.5` |
+
+Raises `ValueError` if degenerate (Neumann + kappa=0 + s>0).
+
+---
+
+### `SobolevKernel3D` — `pygeoinf3d.spaces.forms`
+
+Spectral-projection-backed `LinearForm` for `Sobolev3D` duals.
+
+```python
+SobolevKernel3D(space: Sobolev3D, kernel: Function3D)
+```
+
+Inherits from `pygeoinf.LinearForm`. Implements $\phi_f(g) = \sum_k w_k \hat f_k \hat g_k$
+where $w_k = (\kappa^2 + \lambda_k)^s$ and weights are pre-multiplied into `_weighted_coeffs`.
+
+| Member | Description |
+|--------|-------------|
+| `.kernel` | The primal `Function3D` representer |
+| `.domain` | The owning `Sobolev3D` instance |
+| `.__call__(g)` | `dot(weighted_coeffs, space._project_to_coeffs(g))` |
+| `copy()` | New `SobolevKernel3D` with same space and kernel |
+| `__neg__` / `__mul__` / `__rmul__` / `__truediv__` | Kernel-backed out-of-place arithmetic |
+| `__add__` / `__sub__` | Kernel-backed; require same space identity |
+| `__imul__` / `__iadd__` / `__isub__` | In-place: mutate both `_kernel` and `_weighted_coeffs` |
+
+---
+
+### `BesselOperator3D` — `pygeoinf3d.operators.bessel` (continuous-first public API)
+
+Diagonal Bessel potential operator on a `Sobolev3D`. Maps `Function3D → Function3D`.
+Inherits from `pygeoinf.LinearOperator`.
+
+```python
+BesselOperator3D(space: Sobolev3D, *, power: float)
+```
+
+Self-adjoint. `_apply(f)`: project `f → c`, scale `c_k *= scale_k`, reconstruct `Function3D`.
+Where `scale_k = (kappa^2 + lambda_k)^power`.
+
+| Member | Description |
+|--------|-------------|
+| `.power` | The exponent $p$ |
+| `domain`, `codomain` | Both are the same `Sobolev3D` instance |
+
+**Convenience constructors (continuous-first):**
+
+```python
+bessel_direct(space)   # power = s/2  → BesselOperator3D
+bessel_inverse(space)  # power = -s/2 → BesselOperator3D
+```
+
+Raises `ValueError` if `power < 0` and any `(kappa^2 + lambda_k) = 0`.
+
+---
+
+### `SpectralBesselOperator3D` — `pygeoinf3d.operators.bessel` (secondary coefficient-vector API)
+
+Diagonal Bessel operator on a `SpectralSobolev3D`. Maps coefficient arrays `(N,) → (N,)`.
+This was previously called `BesselOperator3D` before the continuous-first refactor.
+
+```python
+SpectralBesselOperator3D(space: SpectralSobolev3D, *, power: float)
+```
+
+`_apply(c) = scale * c` (pure numpy). Raises `ValueError` if `power < 0` and any base is zero.
+
+---
 
 ```python
 from pygeoinf3d import (
@@ -427,12 +570,19 @@ from pygeoinf3d import (
     Domain3D,
     StructuredDomain3D,
     Boundary3D,
-    Function3D,          # Phase 2
-    Lebesgue3D,          # Phase 2
-    VolumeKernel3D,      # Phase 2
-    BoxDomain,           # Phase 3
-    TensorProductProvider, # Phase 3
-    BoxLaplacian,        # Phase 3
+    Function3D,              # Phase 2
+    Lebesgue3D,              # Phase 2
+    VolumeKernel3D,          # Phase 2
+    BoxDomain,               # Phase 3
+    TensorProductProvider,   # Phase 3
+    BoxLaplacian,            # Phase 3
+    Sobolev3D,               # Phase 4 — continuous-first (Function3D elements)
+    SobolevKernel3D,         # Phase 4 — Riesz dual form for Sobolev3D
+    SpectralSobolev3D,       # Phase 4 — secondary coefficient-vector API
+    BesselOperator3D,        # Phase 4 — continuous-first (Function3D -> Function3D)
+    SpectralBesselOperator3D,# Phase 4 — secondary coefficient-vector API
+    bessel_direct,           # Phase 4
+    bessel_inverse,          # Phase 4
 )
 ```
 
@@ -442,7 +592,6 @@ from pygeoinf3d import (
 
 | Phase | Addition |
 |-------|----------|
-| 4 | `Sobolev3D`, Bessel-Sobolev operators, and trace-ready structure on BoxDomain |
 | 5 | `BallDomain` (StructuredDomain3D, spherical coordinates) |
 | 6 | Dual elements and geometric distributions (point/path/surface/volume) |
 | 7 | End-to-end inversion workflow demo |
@@ -456,16 +605,18 @@ Run with:
 conda run -n inferences3 python -m pytest tests/ -q
 ```
 
-**226 tests, all passing** (Phase 1 + Phase 2 + Phase 3):
+**373 tests, all passing** (Phase 1 + Phase 2 + Phase 3 + Phase 4):
 - `tests/core/test_config.py` — 13 tests
 - `tests/core/test_region.py` — 14 tests
 - `tests/core/test_domain_base.py` — 21 tests
 - `tests/core/test_boundary.py` — 8 tests
 - `tests/core/test_functions.py` — 37 tests  ← Phase 2
 - `tests/spaces/test_lebesgue.py` — 48 tests  ← Phase 2
+- `tests/spaces/test_sobolev.py` — 108 tests  ← Phase 4 (79 SpectralSobolev3D + 29 Sobolev3D continuous-first)
 - `tests/geometries/test_box_domain.py` — 45 tests  ← Phase 3
 - `tests/providers/test_tensor_product.py` — 28 tests  ← Phase 3
 - `tests/operators/test_box_laplacian.py` — 12 tests  ← Phase 3
+- `tests/operators/test_bessel.py` — 39 tests  ← Phase 4 (23 SpectralBesselOperator3D + 16 BesselOperator3D continuous-first)
 
 ---
 
@@ -480,3 +631,6 @@ conda run -n inferences3 python -m pytest tests/ -q
 7. `Lebesgue3D` has `dim == 0` (basis-free Phase 2). `to_components`/`from_components` raise `NotImplementedError`. The inner product is derived from `to_dual` (pairing-first).
 8. `VolumeKernel3D` subclasses `pygeoinf.LinearForm` and overrides `_mapping_impl` to do numerical volume integration. Python's dynamic dispatch routes `__call__` through the override. This avoids the basis-enumeration assumption in `LinearForm._compute_components`. All arithmetic methods (`__add__`, `__sub__`, `__mul__`, `__neg__`, and in-place `__imul__`, `__iadd__`, `__isub__`) are explicitly overridden to keep the object kernel-backed; `LinearForm.__imul__` and `__iadd__` are especially dangerous because they mutate the fake `_components=np.zeros(0)` placeholder silently.
 9. `from_dual` is **conservative**: only accepts `VolumeKernel3D` objects owned by *this* space instance. Generic `LinearForm` objects and foreign-space kernels are rejected.
+10. `Sobolev3D` is continuous-first: elements are **`Function3D`** objects, not numpy arrays. It also exposes an optional spectral component map with `dim == provider.dim`, so `to_components(f)` returns L² spectral coefficients via fast matmul against a pre-cached `_phi_vals` matrix and `from_components(c)` reconstructs a `Function3D`. `to_dual(f)` returns `SobolevKernel3D`, and `from_dual(xp)` accepts only kernels owned by the same `Sobolev3D` instance. `SpectralSobolev3D` is the explicit secondary coefficient-based API (old name: `Sobolev3D`).
+11. `BesselOperator3D` maps `Function3D → Function3D` via project → scale → reconstruct. Self-adjoint. `bessel_direct`/`bessel_inverse` use `power = ±s/2`. `SpectralBesselOperator3D` is the secondary coefficient-based API (old name: `BesselOperator3D`). **Invertibility guard** applies to both classes.
+12. `BoxDomain.sample_boundary` distributes samples proportionally to face areas via `rng.multinomial`, then fills each face with uniform samples. `BoxDomain.outward_normal` assigns normals by finding the face with minimum unsigned distance per point; ties broken by face-index order (x_min first). **Precondition**: meaningful only for boundary points; interior points silently receive nearest-face normal.

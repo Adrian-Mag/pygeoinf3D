@@ -499,6 +499,183 @@ class BoxDomain(StructuredDomain3D):
     # Concrete fast-path overrides
     # ------------------------------------------------------------------
 
+    def sample_boundary(self, n: int, *, rng: Any = None) -> np.ndarray:
+        """Sample *n* points uniformly on the box boundary surface.
+
+        Distributes samples proportionally to each face's area so that the
+        distribution is surface-area-uniform over the full boundary.
+
+        Parameters
+        ----------
+        n:
+            Number of boundary points to sample.
+        rng:
+            Optional random state accepted by ``np.random.default_rng``.
+
+        Returns
+        -------
+        ndarray of shape ``(n, 3)``:
+            Points on the six faces of the box.
+        """
+        rng = np.random.default_rng(rng)
+        lo, hi = self._bbox.low, self._bbox.high
+        Lx = hi[0] - lo[0]
+        Ly = hi[1] - lo[1]
+        Lz = hi[2] - lo[2]
+
+        # Areas of the six faces (two per axis pair)
+        areas = np.array([
+            Ly * Lz,   # x_min
+            Ly * Lz,   # x_max
+            Lx * Lz,   # y_min
+            Lx * Lz,   # y_max
+            Lx * Ly,   # z_min
+            Lx * Ly,   # z_max
+        ])
+        probs = areas / areas.sum()
+
+        # Allocate samples per face via multinomial draw
+        face_counts = rng.multinomial(n, probs)
+
+        parts = []
+
+        # face 0: x_min (x = lo[0])
+        k = face_counts[0]
+        if k > 0:
+            parts.append(np.column_stack([
+                np.full(k, lo[0]),
+                rng.uniform(lo[1], hi[1], k),
+                rng.uniform(lo[2], hi[2], k),
+            ]))
+
+        # face 1: x_max (x = hi[0])
+        k = face_counts[1]
+        if k > 0:
+            parts.append(np.column_stack([
+                np.full(k, hi[0]),
+                rng.uniform(lo[1], hi[1], k),
+                rng.uniform(lo[2], hi[2], k),
+            ]))
+
+        # face 2: y_min (y = lo[1])
+        k = face_counts[2]
+        if k > 0:
+            parts.append(np.column_stack([
+                rng.uniform(lo[0], hi[0], k),
+                np.full(k, lo[1]),
+                rng.uniform(lo[2], hi[2], k),
+            ]))
+
+        # face 3: y_max (y = hi[1])
+        k = face_counts[3]
+        if k > 0:
+            parts.append(np.column_stack([
+                rng.uniform(lo[0], hi[0], k),
+                np.full(k, hi[1]),
+                rng.uniform(lo[2], hi[2], k),
+            ]))
+
+        # face 4: z_min (z = lo[2])
+        k = face_counts[4]
+        if k > 0:
+            parts.append(np.column_stack([
+                rng.uniform(lo[0], hi[0], k),
+                rng.uniform(lo[1], hi[1], k),
+                np.full(k, lo[2]),
+            ]))
+
+        # face 5: z_max (z = hi[2])
+        k = face_counts[5]
+        if k > 0:
+            parts.append(np.column_stack([
+                rng.uniform(lo[0], hi[0], k),
+                rng.uniform(lo[1], hi[1], k),
+                np.full(k, hi[2]),
+            ]))
+
+        if not parts:
+            return np.empty((0, 3))
+        return np.vstack(parts)
+
+    def outward_normal(
+        self,
+        points: np.ndarray,
+        *,
+        component: Optional[str] = None,
+    ) -> np.ndarray:
+        """Return outward unit normals at boundary *points*.
+
+        For each point the nearest face is identified and its outward
+        unit normal is returned.  If a named *component* is given, all
+        points are assigned that face's normal without distance testing.
+
+        .. note::
+            This method is designed for **boundary points**.  For an interior
+            point the returned normal is that of the nearest face, which is
+            geometrically valid but semantically undefined.  Callers should
+            ensure *points* lie on the boundary (e.g. obtained from
+            :meth:`sample_boundary`).
+
+        Parameters
+        ----------
+        points:
+            Array of shape ``(n, 3)`` of boundary point locations.
+        component:
+            Named face: one of ``'x_min'``, ``'x_max'``, ``'y_min'``,
+            ``'y_max'``, ``'z_min'``, ``'z_max'``.  If ``None``, the
+            face is inferred per-point from the minimum distance.
+
+        Returns
+        -------
+        ndarray of shape ``(n, 3)``:
+            Outward unit normals.
+
+        Raises
+        ------
+        ValueError
+            If *component* is not a recognised face label.
+        """
+        pts = np.atleast_2d(np.asarray(points, dtype=float))
+
+        if pts.shape[0] == 0:
+            return np.empty((0, 3))
+
+        # Outward unit normals for each of the six faces
+        _face_normals = np.array([
+            [-1., 0., 0.],  # x_min
+            [+1., 0., 0.],  # x_max
+            [0., -1., 0.],  # y_min
+            [0., +1., 0.],  # y_max
+            [0.,  0., -1.],  # z_min
+            [0.,  0., +1.],  # z_max
+        ])
+        _face_labels = [
+            'x_min', 'x_max', 'y_min', 'y_max', 'z_min', 'z_max',
+        ]
+
+        if component is not None:
+            if component not in _face_labels:
+                raise ValueError(
+                    f"Unknown boundary component {component!r}. "
+                    f"Expected one of {_face_labels!r}."
+                )
+            idx = _face_labels.index(component)
+            return np.tile(_face_normals[idx], (len(pts), 1))
+
+        # General case: find the face with smallest unsigned distance.
+        lo, hi = self._bbox.low, self._bbox.high
+        # Unsigned distances to each face
+        dists = np.column_stack([
+            np.abs(pts[:, 0] - lo[0]),  # x_min
+            np.abs(pts[:, 0] - hi[0]),  # x_max
+            np.abs(pts[:, 1] - lo[1]),  # y_min
+            np.abs(pts[:, 1] - hi[1]),  # y_max
+            np.abs(pts[:, 2] - lo[2]),  # z_min
+            np.abs(pts[:, 2] - hi[2]),  # z_max
+        ])  # shape (n, 6)
+        closest_face = np.argmin(dists, axis=1)  # (n,), lowest index wins ties
+        return _face_normals[closest_face]
+
     def integrate_volume_on_mesh(
         self, values: np.ndarray, weights: Optional[np.ndarray] = None
     ) -> float:

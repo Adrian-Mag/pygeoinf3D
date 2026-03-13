@@ -19,6 +19,16 @@ from .geometries.box.domain import BoxDomain
 from .providers.tensor_product import TensorProductProvider
 from .operators.laplacian_box import BoxLaplacian
 
+# Phase 4 — Sobolev space and Bessel operators on box domains
+from .spaces.sobolev import Sobolev3D, SpectralSobolev3D
+from .spaces.forms import SobolevKernel3D
+from .operators.bessel import (
+    BesselOperator3D,
+    SpectralBesselOperator3D,
+    bessel_direct,
+    bessel_inverse,
+)
+
 __all__ = [
     # Core geometry
     "AxisAlignedBoundingBox",
@@ -35,4 +45,12 @@ __all__ = [
     "BoxDomain",
     "TensorProductProvider",
     "BoxLaplacian",
+    # Phase 4 — Sobolev H^s spaces and Bessel operators
+    "Sobolev3D",
+    "SobolevKernel3D",
+    "SpectralSobolev3D",
+    "BesselOperator3D",
+    "SpectralBesselOperator3D",
+    "bessel_direct",
+    "bessel_inverse",
 ]
