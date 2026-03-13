@@ -1,6 +1,6 @@
 # pygeoinf3D Living Reference
 
-> **Status:** SOLA operator Phase 4 complete — API locked with export tests and extension boundary documented.
+> **Status:** Volumetric kernel providers Phase 1 complete — `function_providers` sub-package scaffold added, provider-protocol contract tests locked.
 > **Last updated:** 2026-03-13
 
 ---
@@ -36,9 +36,11 @@ pygeoinf3D/
 │   │       ├── __init__.py
 │   │       └── domain.py    # BoxDomain  ← Phase 3
 │   ├── providers/
-│   │   ├── __init__.py        # Re-exports FunctionProvider3D, KernelProvider3D, FunctionToKernelAdapter, TensorProductProvider
+│   │   ├── __init__.py        # Re-exports FunctionProvider3D, KernelProvider3D, FunctionToKernelAdapter, TensorProductProvider; imports function_providers
 │   │   ├── base.py            # FunctionProvider3D (ABC), KernelProvider3D (ABC), FunctionToKernelAdapter  ← SOLA Phase 3
-│   │   └── tensor_product.py  # TensorProductProvider  ← Phase 3
+│   │   ├── tensor_product.py  # TensorProductProvider  ← Phase 3
+│   │   └── function_providers/
+│   │       └── __init__.py    # Sub-package scaffold; re-exports FunctionProvider3D ← kernel-providers Phase 1
 │   ├── operators/
 │   │   ├── __init__.py
 │   │   ├── laplacian_box.py   # BoxLaplacian  ← Phase 3
@@ -66,7 +68,8 @@ pygeoinf3D/
 │   │   └── test_box_domain.py        ← Phase 3
 │   ├── providers/
 │   │   ├── __init__.py
-│   │   └── test_tensor_product.py    ← Phase 3
+│   │   ├── test_tensor_product.py        ← Phase 3
+│   │   └── test_function_providers.py    ← kernel-providers Phase 1 (package import + protocol contract)
 │   ├── operators/
 │   │   ├── __init__.py
 │   │   ├── test_box_laplacian.py     ← Phase 3
