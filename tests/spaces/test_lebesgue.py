@@ -684,3 +684,257 @@ class TestDomainIdentityGuards:
         # attempting other.components.
         with pytest.raises((TypeError, ValueError)):
             _ = plain_lf + kf
+
+
+# ===========================================================================
+# Phase 4 (representation boundary) — tests for Lebesgue3D with representation
+# ===========================================================================
+
+class _DummyRepresentation:
+    """Minimal stand-in for CoefficientRepresentation3D used in space tests.
+
+    Returns deterministic arrays so that delegation can be asserted without
+    any numerical computation.
+    """
+
+    def __init__(self, space, *, dim: int):
+        self._space = space
+        self._dim = dim
+
+    @property
+    def space(self):
+        return self._space
+
+    @property
+    def dim(self) -> int:
+        return self._dim
+
+    def to_components(self, f) -> np.ndarray:
+        # Return [1, 2, ..., dim] to make delegation easy to assert.
+        return np.arange(1.0, self._dim + 1.0)
+
+    def from_components(self, c: np.ndarray):
+        from pygeoinf3d.core.functions import Function3D
+        return Function3D(
+            self._space.function_domain,
+            evaluate_callable=lambda x: (
+                np.zeros(len(x)) if np.asarray(x).ndim == 2 else 0.0
+            ),
+        )
+
+
+class TestLebesgue3DWithRepresentation:
+    """Tests for Lebesgue3D when a representation is attached."""
+
+    # ------------------------------------------------------------------
+    # Construction
+    # ------------------------------------------------------------------
+
+    def test_construct_default_no_representation(self):
+        """Lebesgue3D(domain) with no keyword → same as before."""
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        dom = _make_cube_domain()
+        space = Lebesgue3D(dom)
+        assert space.dim == 0
+
+    def test_construct_explicit_none_representation(self):
+        """Lebesgue3D(domain, representation=None) == basis-free."""
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        dom = _make_cube_domain()
+        space = Lebesgue3D(dom, representation=None)
+        assert space.dim == 0
+
+    def test_construct_with_representation(self):
+        """Lebesgue3D(domain, representation=rep) is accepted."""
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        dom = _make_cube_domain()
+        space_base = Lebesgue3D(dom)
+        rep = _DummyRepresentation(space_base, dim=4)
+        space_rep = Lebesgue3D(dom, representation=rep)
+        assert space_rep is not None
+
+    # ------------------------------------------------------------------
+    # dim behavior
+    # ------------------------------------------------------------------
+
+    def test_dim_zero_without_representation(self):
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        dom = _make_cube_domain()
+        space = Lebesgue3D(dom)
+        assert space.dim == 0
+
+    def test_dim_reflects_representation_dim(self):
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        dom = _make_cube_domain()
+        space_base = Lebesgue3D(dom)
+        rep = _DummyRepresentation(space_base, dim=7)
+        space_rep = Lebesgue3D(dom, representation=rep)
+        assert space_rep.dim == 7
+
+    def test_dim_reflects_representation_dim_various(self):
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        dom = _make_cube_domain()
+        for n in [1, 5, 27, 64]:
+            space_base = Lebesgue3D(dom)
+            rep = _DummyRepresentation(space_base, dim=n)
+            space_rep = Lebesgue3D(dom, representation=rep)
+            assert space_rep.dim == n, f"expected dim={n}, got {space_rep.dim}"
+
+    # ------------------------------------------------------------------
+    # to_components / from_components delegation
+    # ------------------------------------------------------------------
+
+    def test_to_components_raises_without_representation(self):
+        """Basis-free mode must raise with a descriptive message."""
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        from pygeoinf3d.core.functions import Function3D
+        dom = _make_cube_domain()
+        space = Lebesgue3D(dom)
+        f = Function3D(dom, evaluate_callable=_x0)
+        with pytest.raises(NotImplementedError):
+            space.to_components(f)
+
+    def test_from_components_raises_without_representation(self):
+        """Basis-free mode must raise with a descriptive message."""
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        dom = _make_cube_domain()
+        space = Lebesgue3D(dom)
+        with pytest.raises(NotImplementedError):
+            space.from_components(np.zeros(0))
+
+    def test_to_components_delegates_to_representation(self):
+        """to_components must call representation.to_components(f)."""
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        from pygeoinf3d.core.functions import Function3D
+        dom = _make_cube_domain()
+        space_base = Lebesgue3D(dom)
+        rep = _DummyRepresentation(space_base, dim=5)
+        space_rep = Lebesgue3D(dom, representation=rep)
+        f = Function3D(dom, evaluate_callable=_x0)
+        c = space_rep.to_components(f)
+        # Dummy returns [1,2,3,4,5]
+        np.testing.assert_array_equal(c, np.array([1.0, 2.0, 3.0, 4.0, 5.0]))
+
+    def test_from_components_delegates_to_representation(self):
+        """from_components must call representation.from_components(c)."""
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        from pygeoinf3d.core.functions import Function3D
+        dom = _make_cube_domain()
+        space_base = Lebesgue3D(dom)
+        rep = _DummyRepresentation(space_base, dim=3)
+        space_rep = Lebesgue3D(dom, representation=rep)
+        c = np.array([1.0, 2.0, 3.0])
+        f_syn = space_rep.from_components(c)
+        assert isinstance(f_syn, Function3D)
+
+    def test_to_components_length_matches_dim(self):
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        from pygeoinf3d.core.functions import Function3D
+        dom = _make_cube_domain()
+        space_base = Lebesgue3D(dom)
+        rep = _DummyRepresentation(space_base, dim=6)
+        space_rep = Lebesgue3D(dom, representation=rep)
+        f = Function3D(dom, evaluate_callable=_const1)
+        c = space_rep.to_components(f)
+        assert len(c) == 6
+
+    # ------------------------------------------------------------------
+    # coordinate_projection / coordinate_inclusion feasibility
+    # ------------------------------------------------------------------
+
+    def test_coordinate_projection_constructible_with_representation(self):
+        """coordinate_projection should return a LinearOperator without error."""
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        from pygeoinf import LinearOperator
+        dom = _make_cube_domain()
+        space_base = Lebesgue3D(dom)
+        rep = _DummyRepresentation(space_base, dim=4)
+        space_rep = Lebesgue3D(dom, representation=rep)
+        proj = space_rep.coordinate_projection
+        assert proj is not None
+        assert isinstance(proj, LinearOperator)
+
+    def test_coordinate_projection_forward_maps_to_coefficients(self):
+        """coordinate_projection(f) should equal to_components(f)."""
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        from pygeoinf3d.core.functions import Function3D
+        dom = _make_cube_domain()
+        space_base = Lebesgue3D(dom)
+        rep = _DummyRepresentation(space_base, dim=5)
+        space_rep = Lebesgue3D(dom, representation=rep)
+        proj = space_rep.coordinate_projection
+        f = Function3D(dom, evaluate_callable=_x0)
+        c = proj(f)
+        np.testing.assert_array_equal(c, np.arange(1.0, 6.0))
+
+    def test_coordinate_inclusion_constructible_with_representation(self):
+        """coordinate_inclusion should return a LinearOperator without error."""
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        from pygeoinf import LinearOperator
+        dom = _make_cube_domain()
+        space_base = Lebesgue3D(dom)
+        rep = _DummyRepresentation(space_base, dim=4)
+        space_rep = Lebesgue3D(dom, representation=rep)
+        incl = space_rep.coordinate_inclusion
+        assert incl is not None
+        assert isinstance(incl, LinearOperator)
+
+    def test_coordinate_inclusion_forward_maps_to_function3d(self):
+        """coordinate_inclusion(c) should return a Function3D."""
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        from pygeoinf3d.core.functions import Function3D
+        dom = _make_cube_domain()
+        space_base = Lebesgue3D(dom)
+        rep = _DummyRepresentation(space_base, dim=4)
+        space_rep = Lebesgue3D(dom, representation=rep)
+        incl = space_rep.coordinate_inclusion
+        c = np.array([0.5, 1.0, 1.5, 2.0])
+        f_syn = incl(c)
+        assert isinstance(f_syn, Function3D)
+
+    # ------------------------------------------------------------------
+    # Preserved invariants
+    # ------------------------------------------------------------------
+
+    def test_to_dual_still_works_with_representation(self):
+        """Attaching a representation must not break to_dual."""
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        from pygeoinf3d.core.functions import Function3D
+        from pygeoinf3d.spaces.forms import VolumeKernel3D
+        dom = _make_cube_domain()
+        space_base = Lebesgue3D(dom)
+        rep = _DummyRepresentation(space_base, dim=3)
+        space_rep = Lebesgue3D(dom, representation=rep)
+        f = Function3D(dom, evaluate_callable=_x0)
+        fp = space_rep.to_dual(f)
+        assert isinstance(fp, VolumeKernel3D)
+
+    def test_inner_product_still_works_with_representation(self):
+        """Attaching a representation must not break inner_product."""
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        from pygeoinf3d.core.functions import Function3D
+        dom = _make_cube_domain()
+        space_base = Lebesgue3D(dom)
+        rep = _DummyRepresentation(space_base, dim=2)
+        space_rep = Lebesgue3D(dom, representation=rep)
+        f = Function3D(dom, evaluate_callable=_x0)
+        g = Function3D(dom, evaluate_callable=_x1)
+        ip = space_rep.inner_product(f, g)
+        np.testing.assert_allclose(ip, 0.25, rtol=0.02)
+
+    def test_equality_ignores_representation(self):
+        """Two Lebesgue3D on the same domain are equal regardless of representation."""
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        dom = _make_cube_domain()
+        space_no_rep = Lebesgue3D(dom)
+        rep = _DummyRepresentation(space_no_rep, dim=3)
+        space_with_rep = Lebesgue3D(dom, representation=rep)
+        assert space_no_rep == space_with_rep
+
+    def test_function_domain_preserved_with_representation(self):
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+        dom = _make_cube_domain()
+        space_base = Lebesgue3D(dom)
+        rep = _DummyRepresentation(space_base, dim=2)
+        space_rep = Lebesgue3D(dom, representation=rep)
+        assert space_rep.function_domain is dom

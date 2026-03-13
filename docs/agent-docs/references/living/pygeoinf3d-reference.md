@@ -1,6 +1,6 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Phase 3 complete — BoxDomain, TensorProductProvider, BoxLaplacian.
+> **Status:** Phase 4 (representation boundary) complete — CoefficientRepresentation3D, LebesgueRepresentation3D, Lebesgue3D representation delegation.
 > **Last updated:** 2026-03-13
 
 ---
@@ -29,7 +29,7 @@ pygeoinf3D/
 │   ├── spaces/
 │   │   ├── __init__.py      # Re-exports Lebesgue3D, VolumeKernel3D
 │   │   ├── forms.py         # VolumeKernel3D  ← Phase 2
-│   │   └── lebesgue.py      # Lebesgue3D  ← Phase 2
+│   │   └── lebesgue.py      # Lebesgue3D  ← Phase 2, updated Phase 4
 │   ├── geometries/
 │   │   ├── __init__.py
 │   │   └── box/
@@ -38,9 +38,13 @@ pygeoinf3D/
 │   ├── providers/
 │   │   ├── __init__.py
 │   │   └── tensor_product.py  # TensorProductProvider  ← Phase 3
-│   └── operators/
-│       ├── __init__.py
-│       └── laplacian_box.py   # BoxLaplacian  ← Phase 3
+│   ├── operators/
+│   │   ├── __init__.py
+│   │   └── laplacian_box.py   # BoxLaplacian  ← Phase 3
+│   └── representations/       # NEW — Phase 4
+│       ├── __init__.py        # Re-exports CoefficientRepresentation3D, LebesgueRepresentation3D
+│       ├── base.py            # CoefficientRepresentation3D (ABC)
+│       └── lebesgue.py        # LebesgueRepresentation3D (concrete)
 ├── tests/
 │   ├── __init__.py
 │   ├── core/
@@ -52,16 +56,19 @@ pygeoinf3D/
 │   │   └── test_functions.py         ← Phase 2
 │   ├── spaces/
 │   │   ├── __init__.py
-│   │   └── test_lebesgue.py          ← Phase 2
+│   │   └── test_lebesgue.py          ← Phase 2, extended Phase 4
 │   ├── geometries/
 │   │   ├── __init__.py
 │   │   └── test_box_domain.py        ← Phase 3
 │   ├── providers/
 │   │   ├── __init__.py
 │   │   └── test_tensor_product.py    ← Phase 3
-│   └── operators/
+│   ├── operators/
+│   │   ├── __init__.py
+│   │   └── test_box_laplacian.py     ← Phase 3
+│   └── representations/              # NEW — Phase 4
 │       ├── __init__.py
-│       └── test_box_laplacian.py     ← Phase 3
+│       └── test_lebesgue_representation.py
 └── docs/
     └── agent-docs/
         ├── active-plans/
@@ -274,22 +281,31 @@ arithmetic with functions on different domain instances.
 L² Hilbert space on a `Domain3D`.  Inherits from `pygeoinf.HilbertSpace`.
 
 ```python
-Lebesgue3D(domain: Domain3D)
+Lebesgue3D(domain: Domain3D, *, representation: CoefficientRepresentation3D | None = None)
 ```
 
 | Member | Description |
 |--------|-------------|
 | `.function_domain` | The underlying `Domain3D` |
-| `.dim` → `0` | Basis-free (no component representation in Phase 2) |
-| `.to_dual(f)` | Maps `f` → `VolumeKernel3D` evaluating `g ↦ ∫f·g dV` |
-| `.from_dual(xp)` | Recovers `Function3D` from own `VolumeKernel3D`; rejects others |
-| `.to_components(f)` | Raises `NotImplementedError` (no basis) |
-| `.from_components(c)` | Raises `NotImplementedError` (no basis) |
-| `.inner_product(f,g)` | `∫f·g dV` via `to_dual(f)(g)` |
-| `.norm(f)` | `√⟨f,f⟩` |
+| `.dim` | `0` when no representation is attached; `representation.dim` otherwise |
+| `.to_dual(f)` | Maps `f` → `VolumeKernel3D` evaluating `g ↦ ∫f·g dV` — always available |
+| `.from_dual(xp)` | Recovers `Function3D` from own `VolumeKernel3D`; rejects others — always available |
+| `.to_components(f)` | Delegates to `representation.to_components(f)`; raises `NotImplementedError` if no rep attached |
+| `.from_components(c)` | Delegates to `representation.from_components(c)`; raises `NotImplementedError` if no rep attached |
+| `.coordinate_projection` | `LinearOperator(self → EuclideanSpace(dim))` — meaningful once representation is attached |
+| `.coordinate_inclusion` | `LinearOperator(EuclideanSpace(dim) → self)` — meaningful once representation is attached |
+| `.inner_product(f,g)` | `∫f·g dV` via `to_dual(f)(g)` — always available |
+| `.norm(f)` | `√⟨f,f⟩` — always available |
 | `.zero` | Constant zero `Function3D` |
 | `.add/.subtract/.multiply/.negative` | Vector-space ops on `Function3D` |
-| `==` | True iff `function_domain is other.function_domain` |
+| `==` | True iff `function_domain is other.function_domain` — ignores attached representation |
+
+**Key invariant:** Space identity and all pairing-first semantics (`to_dual`, `from_dual`,
+`inner_product`) are independent of any attached representation. Two `Lebesgue3D` objects
+on the same `Domain3D` instance are equal even if one has a representation attached.
+
+**Design boundary:** `Lebesgue3D` never owns quadrature policy, Gram matrices, or basis
+ordering. Those belong in representation backends (Phase 2 of the architecture plan).
 
 ---
 
@@ -417,7 +433,64 @@ pre-fetched and stored as a list for reuse across calls.
 
 ---
 
-## Public API (`pygeoinf3d.__init__`)
+## Phase 4 Classes (Representation Boundary)
+
+### `CoefficientRepresentation3D` — `pygeoinf3d.representations.base`
+
+Abstract base class for finite-dimensional coefficient representations.
+
+```python
+class CoefficientRepresentation3D(ABC):
+    @property @abstractmethod  def space(self): ...       # attached Lebesgue3D
+    @property @abstractmethod  def dim(self) -> int: ... # number of coefficients
+    @abstractmethod def to_components(self, f) -> np.ndarray: ...
+    @abstractmethod def from_components(self, c: np.ndarray): ...
+    @property def coefficient_space(self): ...  # EuclideanSpace(dim) — provided by base
+```
+
+**Design boundary:** Does not own quadrature policy or numerical algorithms. Subclasses
+delegate numerical work to a backend object.
+
+---
+
+### `LebesgueRepresentation3D` — `pygeoinf3d.representations.lebesgue`
+
+Concrete `CoefficientRepresentation3D` for `Lebesgue3D` spaces.
+
+```python
+LebesgueRepresentation3D(space: Lebesgue3D, provider, backend)
+```
+
+**Constructor validation:**
+- Raises `TypeError` if `space` is not a `Lebesgue3D`.
+- Raises `ValueError` if `provider.domain` exists and does not match `space.function_domain`.
+- Accepts providers without a `.domain` attribute (permissive, for Phase 1 compatibility).
+
+| Member | Description |
+|--------|-------------|
+| `.space` | The attached `Lebesgue3D` |
+| `.dim` | `int(provider.dim)` |
+| `.coefficient_space` | `EuclideanSpace(dim)` |
+| `.provider` | The basis provider |
+| `.backend` | The numerical backend |
+| `.to_components(f)` | Delegates `backend.to_components(space, provider, f)` |
+| `.from_components(c)` | Delegates `backend.from_components(space, provider, c)` |
+
+**Usage:**
+```python
+rep = LebesgueRepresentation3D(space, provider, backend)
+space_rep = Lebesgue3D(domain, representation=rep)
+c = space_rep.to_components(f)    # delegates through rep to backend
+f_syn = space_rep.from_components(c)
+proj = space_rep.coordinate_projection   # LinearOperator (dim=rep.dim)
+incl = space_rep.coordinate_inclusion    # LinearOperator (dim=rep.dim)
+```
+
+**Phase 2 note:** Concrete backends (`OrthonormalProjectionBackend`,
+`GramProjectionBackend`) are forthcoming. For Phase 1 testing, use a duck-typed
+stub implementing `to_components(space, provider, f)` and `from_components(space, provider, c)`.
+
+---
 
 ```python
 from pygeoinf3d import (
@@ -433,6 +506,8 @@ from pygeoinf3d import (
     BoxDomain,           # Phase 3
     TensorProductProvider, # Phase 3
     BoxLaplacian,        # Phase 3
+    CoefficientRepresentation3D,  # Phase 4
+    LebesgueRepresentation3D,     # Phase 4
 )
 ```
 
@@ -456,16 +531,17 @@ Run with:
 conda run -n inferences3 python -m pytest tests/ -q
 ```
 
-**226 tests, all passing** (Phase 1 + Phase 2 + Phase 3):
+**267 tests, all passing** (Phase 1 + Phase 2 + Phase 3 + Phase 4):
 - `tests/core/test_config.py` — 13 tests
 - `tests/core/test_region.py` — 14 tests
 - `tests/core/test_domain_base.py` — 21 tests
 - `tests/core/test_boundary.py` — 8 tests
 - `tests/core/test_functions.py` — 37 tests  ← Phase 2
-- `tests/spaces/test_lebesgue.py` — 48 tests  ← Phase 2
+- `tests/spaces/test_lebesgue.py` — 84 tests  ← Phase 2, extended Phase 4
 - `tests/geometries/test_box_domain.py` — 45 tests  ← Phase 3
 - `tests/providers/test_tensor_product.py` — 28 tests  ← Phase 3
 - `tests/operators/test_box_laplacian.py` — 12 tests  ← Phase 3
+- `tests/representations/test_lebesgue_representation.py` — 23 tests  ← Phase 4
 
 ---
 

@@ -19,6 +19,9 @@ from .geometries.box.domain import BoxDomain
 from .providers.tensor_product import TensorProductProvider
 from .operators.laplacian_box import BoxLaplacian
 
+# Phase 4 — Representation boundary
+from .representations import CoefficientRepresentation3D, LebesgueRepresentation3D
+
 __all__ = [
     # Core geometry
     "AxisAlignedBoundingBox",
@@ -35,4 +38,7 @@ __all__ = [
     "BoxDomain",
     "TensorProductProvider",
     "BoxLaplacian",
+    # Phase 4 — Representation boundary
+    "CoefficientRepresentation3D",
+    "LebesgueRepresentation3D",
 ]

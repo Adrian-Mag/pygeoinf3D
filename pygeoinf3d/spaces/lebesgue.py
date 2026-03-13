@@ -16,12 +16,19 @@ Design notes
   product is derived from it via ``inner_product(f, g) = to_dual(f)(g)``,
   which is the :class:`~pygeoinf.HilbertSpace` default.
 
-*Basis-free.*
-  ``dim == 0`` signals that no finite-dimensional basis exists in Phase 2.
+*Basis-free by default.*
+  ``dim == 0`` signals that no finite-dimensional representation is attached.
   ``to_components`` and ``from_components`` raise :exc:`NotImplementedError`.
   The ``zero`` property and all arithmetic helpers are overridden so they
   never fall through to the basis-machinery defaults in
   :class:`~pygeoinf.HilbertSpace`.
+
+*Optional representation.*
+  Pass ``representation=rep`` to attach a
+  :class:`~pygeoinf3d.representations.base.CoefficientRepresentation3D`.
+  When attached, ``dim`` returns ``rep.dim`` and ``to_components`` /
+  ``from_components`` delegate to the representation.  All pairing-first
+  semantics (``to_dual``, ``from_dual``, ``inner_product``) are unchanged.
 
 *Conservative ``from_dual``.*
   Only :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D` objects whose
@@ -31,7 +38,7 @@ Design notes
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 
@@ -66,10 +73,17 @@ class Lebesgue3D(HilbertSpace):
 
         # Inner product (derived from pairing)
         ip = space.inner_product(f, g)  # identical to fp(g)
+
+        # With an attached representation
+        from pygeoinf3d.representations.lebesgue import LebesgueRepresentation3D
+        rep = LebesgueRepresentation3D(space, provider, backend)
+        space_rep = Lebesgue3D(dom, representation=rep)
+        c = space_rep.to_components(f)   # delegates to rep.to_components(f)
     """
 
-    def __init__(self, domain) -> None:
+    def __init__(self, domain, *, representation=None) -> None:
         self._function_domain = domain
+        self._representation = representation
 
     # ------------------------------------------------------------------
     # HilbertSpace abstract interface
@@ -79,9 +93,12 @@ class Lebesgue3D(HilbertSpace):
     def dim(self) -> int:
         """Dimension of the finite component representation.
 
-        Returns 0 in Phase 2 (no basis); signals basis-free mode.
+        Returns ``0`` when no representation is attached (basis-free mode).
+        Returns ``representation.dim`` when a representation is attached.
         """
-        return 0
+        if self._representation is None:
+            return 0
+        return self._representation.dim
 
     @property
     def function_domain(self):
@@ -158,30 +175,40 @@ class Lebesgue3D(HilbertSpace):
         return xp.kernel
 
     def to_components(self, f: Function3D) -> np.ndarray:
-        """Not implemented in Phase 2 (no basis).
+        """Map a primal function to its coefficient vector.
+
+        Delegates to the attached representation when one is present.
 
         Raises
         ------
         NotImplementedError
+            If no representation is attached.
         """
-        raise NotImplementedError(
-            "Lebesgue3D has no finite basis in Phase 2.  "
-            "to_components will be available once a basis provider is attached "
-            "(Phase 3+)."
-        )
+        if self._representation is None:
+            raise NotImplementedError(
+                "Lebesgue3D.to_components: no representation is attached.  "
+                "Construct Lebesgue3D(domain, representation=rep) to enable "
+                "component operations."
+            )
+        return self._representation.to_components(f)
 
     def from_components(self, c: np.ndarray) -> Function3D:
-        """Not implemented in Phase 2 (no basis).
+        """Synthesise a :class:`~pygeoinf3d.core.functions.Function3D` from coefficients.
+
+        Delegates to the attached representation when one is present.
 
         Raises
         ------
         NotImplementedError
+            If no representation is attached.
         """
-        raise NotImplementedError(
-            "Lebesgue3D has no finite basis in Phase 2.  "
-            "from_components will be available once a basis provider is "
-            "attached (Phase 3+)."
-        )
+        if self._representation is None:
+            raise NotImplementedError(
+                "Lebesgue3D.from_components: no representation is attached.  "
+                "Construct Lebesgue3D(domain, representation=rep) to enable "
+                "component operations."
+            )
+        return self._representation.from_components(c)
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Lebesgue3D):
@@ -238,4 +265,9 @@ class Lebesgue3D(HilbertSpace):
         return float(np.sqrt(max(ip, 0.0)))
 
     def __repr__(self) -> str:
+        if self._representation is not None:
+            return (
+                f"Lebesgue3D(domain={self._function_domain!r}, "
+                f"representation={self._representation!r})"
+            )
         return f"Lebesgue3D(domain={self._function_domain!r})"
