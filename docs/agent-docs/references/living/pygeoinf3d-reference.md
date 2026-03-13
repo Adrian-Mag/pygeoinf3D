@@ -1,6 +1,6 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Volumetric kernel providers Phase 2 revised — docstrings corrected, type-safe tests, one new BoxcarProvider3D (n,3) widths test; 70 concrete-provider tests (82 total in providers), all passing.
+> **Status:** Volumetric kernel providers Phase 3 applied — slice visualization (plot.py) revised: type-safe imports, resolution validation, np.asarray coercion, all diagnostics resolved.
 > **Last updated:** 2026-03-13
 
 ---
@@ -19,6 +19,7 @@ pygeoinf3D/
 ├── README.md
 ├── pygeoinf3d/
 │   ├── __init__.py          # Re-exports all public API
+│   ├── plot.py              # Visualization (evaluate_slice, plot_slice) ← Phase 3
 │   ├── core/
 │   │   ├── __init__.py
 │   │   ├── config.py        # AxisAlignedBoundingBox, CoordinateSystem
@@ -77,11 +78,12 @@ pygeoinf3D/
 │   ├── operators/
 │   │   ├── __init__.py
 │   │   ├── test_box_laplacian.py     ← Phase 3
-│   │   └── test_sola.py             ← SOLA Phase 1+2+3+4
+│   │   └── test_sola.py              ← SOLA Phase 1+2+3+4
 │   └── representations/              # Lebesgue coefficient architecture Phases 1-2
 │       ├── __init__.py
 │       ├── test_lebesgue_representation.py  ← architecture Phase 1
 │       └── test_projection_backends.py     ← architecture Phase 2
+│   └── test_plot.py                  ← Phase 3 (plot revision)
 └── docs/
     └── agent-docs/
         ├── active-plans/
@@ -353,6 +355,96 @@ parent's `_components` array, which is a fake `np.zeros(0)` placeholder in
 `VolumeKernel3D`.  These are overridden to mutate `self._kernel` instead.
 `__isub__` is also overridden for consistency (Python's default fallback to
 `__sub__` would silently rebind rather than mutate).
+
+---
+
+## Plotting Module — `pygeoinf3d.plot`
+
+Slice-based visualization utilities for `Function3D` objects.  Minimal API:
+two public functions plus three private helpers.  No Plotly dependency.
+
+### Public API
+
+```python
+from pygeoinf3d.plot import (
+    evaluate_function3d_on_axis_slice,
+    plot_function3d_axis_slice,
+)
+```
+
+#### `evaluate_function3d_on_axis_slice`
+
+```python
+evaluate_function3d_on_axis_slice(
+    function: Function3D,
+    axis: int | str,
+    coord: float | None = None,
+    resolution: int | tuple[int, int] = 100,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]
+```
+
+Samples a `Function3D` on an axis-aligned planar slice of its domain.
+Returns `(grid_u, grid_v, values)` all of shape `(nu, nv)`, where `u` and `v`
+are the two axes orthogonal to the slice axis (in the order given by
+`_get_other_axes`).
+
+| Arg | Description |
+|-----|-------------|
+| `axis` | `'x'`/`'y'`/`'z'` or `0`/`1`/`2` |
+| `coord` | slice position; defaults to domain bbox midpoint |
+| `resolution` | positive `int` → `(n,n)`; 2-tuple of positive ints → `(nu,nv)` |
+
+Raises `ValueError` for: invalid axis, coord outside domain bounds, or
+malformed resolution (non-positive, wrong tuple length).
+
+Batch-evaluates via `function(points)` where `points` has shape `(nu*nv, 3)`.
+Coerces result with `np.asarray(...)` before reshape to handle scalar returns.
+
+#### `plot_function3d_axis_slice`
+
+```python
+plot_function3d_axis_slice(
+    function: Function3D,
+    axis: int | str,
+    coord: float | None = None,
+    resolution: int | tuple[int, int] = 100,
+    show_plot: bool = True,
+    title: str | None = None,
+    ax: matplotlib.axes.Axes | None = None,
+    **kwargs,
+) -> tuple[matplotlib.figure.Figure, matplotlib.axes.Axes, dict[str, Any]]
+```
+
+Plots a `pcolormesh` heatmap of the slice.  Returns `(fig, ax, payload)` where
+`payload` contains `{'grid_u', 'grid_v', 'values', 'axis_idx', 'coord'}`.
+
+If `ax` is provided, `fig` is obtained via `cast(Figure, ax.figure)`.
+
+### Private Helpers
+
+| Helper | Description |
+|--------|-------------|
+| `_parse_axis(axis)` | Normalises `int`/`str` axis to `0`/`1`/`2` |
+| `_get_other_axes(axis_idx)` | Returns `(u_idx, v_idx)` for the two free axes |
+| `_validate_resolution(res)` | Validates and returns `(nu, nv)`; raises `ValueError` for non-positive or malformed input |
+
+### Type Notes
+
+- `Axes` imported from `matplotlib.axes`, not `plt.Axes` (not exported).
+- `Figure` imported from `matplotlib.figure`, not `plt.Figure` (not exported).
+- `cast(Figure, ax.figure)` used when reusing existing axes (`ax.figure` returns
+  `Figure | SubFigure`; cast narrows for the return type).
+
+### Tests — `tests/test_plot.py`
+
+| Test | Description |
+|------|-------------|
+| `test_evaluate_slice_z_center` | Slice at z=0.5; shape, bounds, and value at corner |
+| `test_evaluate_slice_x_axis` | Slice at x=0 with tuple resolution (5,5); checks values=y+z |
+| `test_plot_slice_smoke` | Runs with Agg backend; checks fig/ax/payload structure |
+| `test_invalid_input` | Bad axis and out-of-bounds coord raise `ValueError` |
+| `test_resolution_validation` | resolution=0, -5, (5,5,5), (0,5) all raise `ValueError` |
+| `test_default_coord` | Omitting coord defaults to bbox midpoint |
 
 ---
 
