@@ -1,6 +1,6 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Phase 4 (representation boundary) complete — CoefficientRepresentation3D, LebesgueRepresentation3D, Lebesgue3D representation delegation.
+> **Status:** Lebesgue coefficient architecture Phase 2 complete — Gram-aware backends and induced coefficient metric.
 > **Last updated:** 2026-03-13
 
 ---
@@ -41,10 +41,12 @@ pygeoinf3D/
 │   ├── operators/
 │   │   ├── __init__.py
 │   │   └── laplacian_box.py   # BoxLaplacian  ← Phase 3
-│   └── representations/       # NEW — Phase 4
-│       ├── __init__.py        # Re-exports CoefficientRepresentation3D, LebesgueRepresentation3D
-│       ├── base.py            # CoefficientRepresentation3D (ABC)
-│       └── lebesgue.py        # LebesgueRepresentation3D (concrete)
+│   └── representations/       # Lebesgue coefficient architecture Phases 1-2
+│       ├── __init__.py        # Re-exports all representation public API
+│       ├── base.py            # CoefficientRepresentation3D (ABC), LebesgueCoefficientBackend (ABC)
+│       ├── lebesgue.py        # LebesgueRepresentation3D (concrete)
+│       ├── backends.py        # OrthonormalProjectionBackend, GramProjectionBackend  ← architecture Phase 2
+│       └── gram.py            # assemble_gram, gram_operators helpers  ← architecture Phase 2
 ├── tests/
 │   ├── __init__.py
 │   ├── core/
@@ -66,9 +68,10 @@ pygeoinf3D/
 │   ├── operators/
 │   │   ├── __init__.py
 │   │   └── test_box_laplacian.py     ← Phase 3
-│   └── representations/              # NEW — Phase 4
+│   └── representations/              # Lebesgue coefficient architecture Phases 1-2
 │       ├── __init__.py
-│       └── test_lebesgue_representation.py
+│       ├── test_lebesgue_representation.py  ← architecture Phase 1
+│       └── test_projection_backends.py     ← architecture Phase 2
 └── docs/
     └── agent-docs/
         ├── active-plans/
@@ -449,11 +452,96 @@ class CoefficientRepresentation3D(ABC):
 ```
 
 **Design boundary:** Does not own quadrature policy or numerical algorithms. Subclasses
-delegate numerical work to a backend object.
+delegate numerical work to a backend object.  The optional concrete method
+`coefficient_metric()` raises `NotImplementedError` by default; subclasses that
+attach a Phase-2 backend (see below) can expose it.
 
 ---
 
-### `LebesgueRepresentation3D` — `pygeoinf3d.representations.lebesgue`
+### `LebesgueCoefficientBackend` — `pygeoinf3d.representations.base`
+
+Abstract numerical strategy object for Lebesgue coefficient workflows.
+
+```python
+class LebesgueCoefficientBackend(ABC):
+    @abstractmethod  def moments(self, space, provider, f) -> np.ndarray
+    @abstractmethod  def gram_matrix(self, space, provider) -> np.ndarray
+    @abstractmethod  def coefficient_metric(self, space, provider) -> MassWeightedHilbertSpace
+    @abstractmethod  def solve_coefficients(self, G, b) -> np.ndarray
+    @abstractmethod  def to_components(self, space, provider, f) -> np.ndarray
+    @abstractmethod  def from_components(self, space, provider, c) -> Function3D
+```
+
+**Provider protocol** expected by all backend methods:
+- `provider.dim` — number of basis functions.
+- `provider.get_basis_function(i)` — returns the `i`-th `Function3D` basis element.
+
+**Design boundary:** Backends are stateless strategies (modulo caching). They do not
+attach to a specific space or provider; those are passed on each call.
+
+---
+
+## Lebesgue Coefficient Architecture Phase 2 Classes
+
+### `OrthonormalProjectionBackend` — `pygeoinf3d.representations.backends`
+
+Backend for bases orthonormal w.r.t. the space inner product.
+
+```python
+OrthonormalProjectionBackend()   # no constructor arguments
+```
+
+| Method | Description |
+|--------|-------------|
+| `.moments(space, provider, f)` | `b_i = ⟨φ_i, f⟩` via `space.inner_product` |
+| `.gram_matrix(space, provider)` | Returns `I_n` (no integration, orthonormal assumption) |
+| `.coefficient_metric(space, provider)` | `MassWeightedHilbertSpace(EuclideanSpace(n), I, I)` — standard Euclidean metric |
+| `.solve_coefficients(G, b)` | Returns `b.copy()` (identity solve) |
+| `.to_components(space, provider, f)` | Delegates to `moments` |
+| `.from_components(space, provider, c)` | Builds `Σ c_i φ_i` via `Function3D` arithmetic |
+
+**When to use:** tensor-product box eigenfunctions with consistent quadrature (Phase 3+).
+
+---
+
+### `GramProjectionBackend` — `pygeoinf3d.representations.backends`
+
+General backend for non-orthogonal basis families.
+
+```python
+GramProjectionBackend()   # no constructor arguments
+```
+
+| Method | Description |
+|--------|-------------|
+| `.moments(space, provider, f)` | `b_i = ⟨φ_i, f⟩` via `space.inner_product` |
+| `.gram_matrix(space, provider)` | Assembles `G_{ij}=⟨φ_i,φ_j⟩`; **cached** per `(id(space), id(provider))` |
+| `.coefficient_metric(space, provider)` | `MassWeightedHilbertSpace(EuclideanSpace(n), G, G⁻¹)` |
+| `.solve_coefficients(G, b)` | Cholesky solve `G c = b` (LU fallback for borderline SPD) |
+| `.to_components(space, provider, f)` | Assembles moments, then solves `G c = b` |
+| `.from_components(space, provider, c)` | Builds `Σ c_i φ_i` via `Function3D` arithmetic |
+
+**Key invariant:** `G @ to_components(f) ≈ moments(f)` for any function `f`.
+
+---
+
+### `assemble_gram` / `gram_operators` — `pygeoinf3d.representations.gram`
+
+```python
+from pygeoinf3d.representations.gram import assemble_gram, gram_operators
+
+G = assemble_gram(space, provider)           # np.ndarray (n, n)
+mass_op, inv_mass_op = gram_operators(G)   # LinearOperator pair on EuclideanSpace(n)
+```
+
+- `assemble_gram`: iterates over `provider.dim` basis pairs, calls `space.inner_product`.
+- `gram_operators`: wraps `G` in a `LinearOperator` and builds the Cholesky/LU inverse.
+  Returns a pair suitable for `MassWeightedHilbertSpace(euc, mass_op, inv_mass_op)`.
+  Emits `RuntimeWarning` if `cond(G) > 1e12`.
+
+---
+
+### Updated: `LebesgueRepresentation3D` — Architecture Phase 2 additions
 
 Concrete `CoefficientRepresentation3D` for `Lebesgue3D` spaces.
 
@@ -470,25 +558,33 @@ LebesgueRepresentation3D(space: Lebesgue3D, provider, backend)
 |--------|-------------|
 | `.space` | The attached `Lebesgue3D` |
 | `.dim` | `int(provider.dim)` |
-| `.coefficient_space` | `EuclideanSpace(dim)` |
+| `.coefficient_space` | `EuclideanSpace(dim)` — algebraic carrier |
 | `.provider` | The basis provider |
 | `.backend` | The numerical backend |
 | `.to_components(f)` | Delegates `backend.to_components(space, provider, f)` |
 | `.from_components(c)` | Delegates `backend.from_components(space, provider, c)` |
+| `.coefficient_metric()` | Delegates `backend.coefficient_metric(space, provider)` — **architecture Phase 2** |
+| `.gram_matrix()` | Delegates `backend.gram_matrix(space, provider)` — **architecture Phase 2** |
+| `.moments(f)` | Delegates `backend.moments(space, provider, f)` — **architecture Phase 2** |
 
 **Usage:**
 ```python
+from pygeoinf3d.representations.backends import GramProjectionBackend
 rep = LebesgueRepresentation3D(space, provider, backend)
 space_rep = Lebesgue3D(domain, representation=rep)
-c = space_rep.to_components(f)    # delegates through rep to backend
+c = space_rep.to_components(f)           # delegates through backend
 f_syn = space_rep.from_components(c)
-proj = space_rep.coordinate_projection   # LinearOperator (dim=rep.dim)
-incl = space_rep.coordinate_inclusion    # LinearOperator (dim=rep.dim)
+metric = rep.coefficient_metric()        # MassWeightedHilbertSpace — architecture Phase 2
+G = rep.gram_matrix()                    # np.ndarray (n,n) — architecture Phase 2
+b = rep.moments(f)                       # raw moments — architecture Phase 2
+proj = space_rep.coordinate_projection  # LinearOperator (dim=rep.dim)
+incl = space_rep.coordinate_inclusion   # LinearOperator (dim=rep.dim)
 ```
 
-**Phase 2 note:** Concrete backends (`OrthonormalProjectionBackend`,
-`GramProjectionBackend`) are forthcoming. For Phase 1 testing, use a duck-typed
-stub implementing `to_components(space, provider, f)` and `from_components(space, provider, c)`.
+**Backend compatibility:** `.coefficient_metric()`, `.gram_matrix()`, and `.moments()`
+raise `NotImplementedError` if the attached backend does not implement the
+corresponding method.  Use `OrthonormalProjectionBackend` or `GramProjectionBackend`
+(both from `pygeoinf3d.representations.backends`) for full architecture Phase 2 functionality.
 
 ---
 
@@ -508,6 +604,10 @@ from pygeoinf3d import (
     BoxLaplacian,        # Phase 3
     CoefficientRepresentation3D,  # Phase 4
     LebesgueRepresentation3D,     # Phase 4
+    # Lebesgue coefficient architecture Phase 2 — Gram-aware backends
+    LebesgueCoefficientBackend,
+    OrthonormalProjectionBackend,
+    GramProjectionBackend,
 )
 ```
 
@@ -531,7 +631,7 @@ Run with:
 conda run -n inferences3 python -m pytest tests/ -q
 ```
 
-**267 tests, all passing** (Phase 1 + Phase 2 + Phase 3 + Phase 4):
+**307 tests reported passing** (foundation Phases 1-3 + coefficient architecture Phases 1-2):
 - `tests/core/test_config.py` — 13 tests
 - `tests/core/test_region.py` — 14 tests
 - `tests/core/test_domain_base.py` — 21 tests
@@ -541,7 +641,8 @@ conda run -n inferences3 python -m pytest tests/ -q
 - `tests/geometries/test_box_domain.py` — 45 tests  ← Phase 3
 - `tests/providers/test_tensor_product.py` — 28 tests  ← Phase 3
 - `tests/operators/test_box_laplacian.py` — 12 tests  ← Phase 3
-- `tests/representations/test_lebesgue_representation.py` — 23 tests  ← Phase 4
+- `tests/representations/test_lebesgue_representation.py` — 22 tests  ← architecture Phase 1
+- `tests/representations/test_projection_backends.py` — 40 tests  ← architecture Phase 2
 
 ---
 

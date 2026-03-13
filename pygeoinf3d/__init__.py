@@ -19,8 +19,15 @@ from .geometries.box.domain import BoxDomain
 from .providers.tensor_product import TensorProductProvider
 from .operators.laplacian_box import BoxLaplacian
 
-# Phase 4 — Representation boundary
-from .representations import CoefficientRepresentation3D, LebesgueRepresentation3D
+# Lebesgue coefficient architecture Phase 1 — representation boundary
+# Lebesgue coefficient architecture Phase 2 — Gram-aware backends
+from .representations import (
+    CoefficientRepresentation3D,
+    LebesgueCoefficientBackend,
+    LebesgueRepresentation3D,
+    OrthonormalProjectionBackend,
+    GramProjectionBackend,
+)
 
 __all__ = [
     # Core geometry
@@ -41,4 +48,8 @@ __all__ = [
     # Phase 4 — Representation boundary
     "CoefficientRepresentation3D",
     "LebesgueRepresentation3D",
+    # Phase 2 (backends) — Gram-aware coefficient infrastructure
+    "LebesgueCoefficientBackend",
+    "OrthonormalProjectionBackend",
+    "GramProjectionBackend",
 ]

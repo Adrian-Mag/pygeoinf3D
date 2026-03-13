@@ -38,7 +38,7 @@ Design notes
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -49,7 +49,8 @@ from pygeoinf3d.spaces.forms import VolumeKernel3D
 
 
 class Lebesgue3D(HilbertSpace):
-    """Concrete L² Hilbert space on a :class:`~pygeoinf3d.core.domain_base.Domain3D`.
+    """Concrete L² Hilbert space on a
+    :class:`~pygeoinf3d.core.domain_base.Domain3D`.
 
     Parameters
     ----------
@@ -64,8 +65,18 @@ class Lebesgue3D(HilbertSpace):
         dom = SomeDomain3D(...)
         space = Lebesgue3D(dom)
 
-        f = Function3D(dom, evaluate_callable=lambda x: x[:, 0] if x.ndim == 2 else float(x[0]))
-        g = Function3D(dom, evaluate_callable=lambda x: x[:, 1] if x.ndim == 2 else float(x[1]))
+        f = Function3D(
+            dom,
+            evaluate_callable=lambda x: (
+                x[:, 0] if x.ndim == 2 else float(x[0])
+            ),
+        )
+        g = Function3D(
+            dom,
+            evaluate_callable=lambda x: (
+                x[:, 1] if x.ndim == 2 else float(x[1])
+            ),
+        )
 
         # Pairing (dual evaluation)
         fp = space.to_dual(f)   # VolumeKernel3D
@@ -75,7 +86,9 @@ class Lebesgue3D(HilbertSpace):
         ip = space.inner_product(f, g)  # identical to fp(g)
 
         # With an attached representation
-        from pygeoinf3d.representations.lebesgue import LebesgueRepresentation3D
+        from pygeoinf3d.representations.lebesgue import (
+            LebesgueRepresentation3D,
+        )
         rep = LebesgueRepresentation3D(space, provider, backend)
         space_rep = Lebesgue3D(dom, representation=rep)
         c = space_rep.to_components(f)   # delegates to rep.to_components(f)
@@ -102,7 +115,7 @@ class Lebesgue3D(HilbertSpace):
 
     @property
     def function_domain(self):
-        """The :class:`~pygeoinf3d.core.domain_base.Domain3D` this space is built on."""
+        """The domain object on which this space is defined."""
         return self._function_domain
 
     def to_dual(self, f: Function3D) -> VolumeKernel3D:
@@ -193,7 +206,8 @@ class Lebesgue3D(HilbertSpace):
         return self._representation.to_components(f)
 
     def from_components(self, c: np.ndarray) -> Function3D:
-        """Synthesise a :class:`~pygeoinf3d.core.functions.Function3D` from coefficients.
+        """Synthesise a
+        :class:`~pygeoinf3d.core.functions.Function3D` from coefficients.
 
         Delegates to the attached representation when one is present.
 

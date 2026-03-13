@@ -93,9 +93,147 @@ class CoefficientRepresentation3D(ABC):
 
     @property
     def coefficient_space(self):
-        """Return ``EuclideanSpace(dim)`` — the finite coefficient domain.
+        """Return ``EuclideanSpace(dim)`` — the algebraic coefficient carrier.
+
+        This is always plain :math:`\\mathbb{R}^n` (standard Euclidean space).
+        The *induced Hilbert structure* on coefficients is in general different
+        from the standard Euclidean inner product; use :meth:`coefficient_metric`
+        to obtain it.
 
         The instance is not cached here; callers may cache if needed.
         """
         from pygeoinf import EuclideanSpace
         return EuclideanSpace(self.dim)
+
+    def coefficient_metric(self):
+        """Return the induced Hilbert structure on the coefficient carrier.
+
+        The algebraic carrier is :meth:`coefficient_space` = ``EuclideanSpace(n)``.
+        However, the physically correct inner product on coefficient vectors
+        depends on the chosen basis family: for a non-orthonormal family it is
+        the Gram-weighted inner product :math:`\\langle c_1, c_2 \\rangle_G = c_1^\\top G c_2`.
+
+        Concrete implementations should override this method to return a
+        :class:`~pygeoinf.hilbert_space.MassWeightedHilbertSpace` (or a
+        compatible Hilbert space object) that encodes this structure.
+
+        Raises
+        ------
+        NotImplementedError
+            If the subclass or its backend does not implement coefficient metric
+            computation.  Attach a backend that supports
+            :py:meth:`~pygeoinf3d.representations.base.LebesgueCoefficientBackend.coefficient_metric`.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement coefficient_metric(). "
+            "Attach a backend that supports metric computation, such as "
+            "OrthonormalProjectionBackend or GramProjectionBackend."
+        )
+
+
+# ---------------------------------------------------------------------------
+# LebesgueCoefficientBackend — abstract numerical strategy
+# ---------------------------------------------------------------------------
+
+
+class LebesgueCoefficientBackend(ABC):
+    r"""Abstract numerical backend for Lebesgue coefficient analysis and synthesis.
+
+    A backend implements the full numerical workflow for a given basis strategy:
+    moment assembly, Gram matrix construction, coefficient solves, and synthesis.
+    It explicitly exposes the *induced coefficient-space metric* so that the
+    algebraic carrier (:class:`~pygeoinf.hilbert_space.EuclideanSpace`\(n\)) can
+    be distinguished from the Hilbert inner product structure that depends on the
+    chosen basis family.
+
+    Backends are stateless numerical strategies that accept ``(space, provider)``
+    arguments on each call, allowing a single backend instance to be reused across
+    multiple representations.  Concrete subclasses may add per-``(space, provider)``
+    caching.
+
+    Provider protocol
+    -----------------
+    All methods that receive a ``provider`` argument require:
+
+    * ``provider.dim`` — number of basis functions.
+    * ``provider.get_basis_function(i)`` — the ``i``-th basis function as a
+      ``Function3D`` on the same domain as ``space``.
+    """
+
+    @abstractmethod
+    def moments(self, space, provider, f) -> np.ndarray:
+        r"""Compute raw moments :math:`b_i = \langle \phi_i, f \rangle`.
+
+        Raw moments are NOT necessarily equal to the true basis coefficients
+        unless the family is orthonormal.  Use :meth:`to_components` for
+        coefficients.
+
+        Returns
+        -------
+        b : np.ndarray, shape ``(n,)``
+        """
+
+    @abstractmethod
+    def gram_matrix(self, space, provider) -> np.ndarray:
+        r"""Return the :math:`n \times n` Gram matrix :math:`G_{ij} = \langle \phi_i, \phi_j \rangle`.
+
+        Returns
+        -------
+        G : np.ndarray, shape ``(n, n)``
+        """
+
+    @abstractmethod
+    def coefficient_metric(self, space, provider):
+        r"""Return the induced coefficient-space Hilbert structure.
+
+        The coefficient carrier is :class:`~pygeoinf.hilbert_space.EuclideanSpace`\(n\).
+        For non-orthonormal families the physically correct inner product on
+        coefficients is :math:`\langle c_1, c_2 \rangle_G = c_1^\top G c_2`, not
+        the standard Euclidean one.
+
+        Returns
+        -------
+        MassWeightedHilbertSpace
+            Hilbert space on :math:`\mathbb{R}^n` whose inner product encodes
+            the induced metric.
+        """
+
+    @abstractmethod
+    def solve_coefficients(self, G: np.ndarray, b: np.ndarray) -> np.ndarray:
+        r"""Solve :math:`G c = b` for the coefficient vector *c*.
+
+        Parameters
+        ----------
+        G : np.ndarray, shape ``(n, n)``
+        b : np.ndarray, shape ``(n,)``
+
+        Returns
+        -------
+        c : np.ndarray, shape ``(n,)``
+        """
+
+    @abstractmethod
+    def to_components(self, space, provider, f) -> np.ndarray:
+        """Compute the true basis coefficient vector.
+
+        This is the primary analysis map and must return correct coefficients
+        even for non-orthonormal families (i.e., it should account for the
+        Gram matrix).
+
+        Returns
+        -------
+        c : np.ndarray, shape ``(n,)``
+        """
+
+    @abstractmethod
+    def from_components(self, space, provider, c: np.ndarray):
+        r"""Synthesise :math:`f = \sum_i c_i \phi_i`.
+
+        Parameters
+        ----------
+        c : np.ndarray, shape ``(n,)``
+
+        Returns
+        -------
+        Function3D
+        """

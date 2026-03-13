@@ -1,7 +1,8 @@
 """Lebesgue-specific coefficient representation.
 
-:class:`LebesgueRepresentation3D` binds a :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D`
-space to a basis provider and a numerical backend, implementing the
+:class:`LebesgueRepresentation3D` binds a
+:class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` space to a basis provider
+and a numerical backend, implementing the
 :class:`~pygeoinf3d.representations.base.CoefficientRepresentation3D` contract.
 
 Responsibilities
@@ -11,7 +12,7 @@ Responsibilities
 * Delegates ``to_components`` and ``from_components`` to the backend.
 
 This module intentionally contains **no numerical algorithms** — those belong
-in backend objects (to be added in Phase 2 of the architecture plan).
+in backend objects introduced in Phase 2 of the architecture plan.
 """
 
 from __future__ import annotations
@@ -24,7 +25,8 @@ from pygeoinf3d.representations.base import CoefficientRepresentation3D
 
 
 class LebesgueRepresentation3D(CoefficientRepresentation3D):
-    """Concrete coefficient representation for :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D`.
+    """Concrete coefficient representation for
+    :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D`.
 
     Binds a ``Lebesgue3D`` space to a basis provider and a numerical backend.
     The provider enumerates basis functions and metadata; the backend performs
@@ -67,7 +69,10 @@ class LebesgueRepresentation3D(CoefficientRepresentation3D):
                 provider_domain = d
                 break
 
-        if provider_domain is not None and provider_domain is not space.function_domain:
+        if (
+            provider_domain is not None
+            and provider_domain is not space.function_domain
+        ):
             raise ValueError(
                 "LebesgueRepresentation3D: provider's domain does not match "
                 "space.function_domain (identity check).  "
@@ -136,6 +141,79 @@ class LebesgueRepresentation3D(CoefficientRepresentation3D):
     def backend(self):
         """The numerical backend bound to this representation."""
         return self._backend
+
+    # ------------------------------------------------------------------
+    # Phase 2 — coefficient metric and moment accessors
+    # ------------------------------------------------------------------
+
+    def coefficient_metric(self):
+        r"""Return the induced Hilbert structure on the coefficient carrier.
+
+        Delegates to ``backend.coefficient_metric(space, provider)``.  The
+        algebraic carrier is always ``EuclideanSpace(dim)`` (accessible via
+        :attr:`coefficient_space`); this method returns the *metric* that
+        encodes the physically correct inner product on coefficient vectors —
+        in general a Gram-weighted inner product rather than the standard
+        Euclidean one.
+
+        Returns
+        -------
+        MassWeightedHilbertSpace
+            Hilbert space on :math:`\\mathbb{R}^{\\text{dim}}` with mass
+            operator determined by the backend strategy.
+
+        Raises
+        ------
+        NotImplementedError
+            If the attached backend does not implement
+            ``coefficient_metric(space, provider)``.
+        """
+        if not hasattr(self._backend, "coefficient_metric"):
+            raise NotImplementedError(
+                f"Backend {type(self._backend).__name__!r} does not implement "
+                "coefficient_metric(space, provider).  Use "
+                "OrthonormalProjectionBackend or GramProjectionBackend."
+            )
+        return self._backend.coefficient_metric(self._space, self._provider)
+
+    def gram_matrix(self) -> "np.ndarray":
+        r"""Return or compute the Gram matrix
+        :math:`G_{ij} = \\langle \\phi_i, \\phi_j \\rangle`.
+
+        Delegates to ``backend.gram_matrix(space, provider)``.
+
+        Returns
+        -------
+        G : np.ndarray, shape ``(dim, dim)``
+        """
+        if not hasattr(self._backend, "gram_matrix"):
+            raise NotImplementedError(
+                f"Backend {type(self._backend).__name__!r} does not implement "
+                "gram_matrix(space, provider)."
+            )
+        return self._backend.gram_matrix(self._space, self._provider)
+
+    def moments(self, f) -> "np.ndarray":
+        r"""Compute raw moments :math:`b_i = \\langle \\phi_i, f \\rangle`.
+
+        Raw moments are NOT equal to the true basis coefficients unless the
+        basis family is orthonormal.  Use :meth:`to_components` for true
+        coefficients.
+
+        Parameters
+        ----------
+        f : Function3D
+
+        Returns
+        -------
+        b : np.ndarray, shape ``(dim,)``
+        """
+        if not hasattr(self._backend, "moments"):
+            raise NotImplementedError(
+                f"Backend {type(self._backend).__name__!r} does not implement "
+                "moments(space, provider, f)."
+            )
+        return self._backend.moments(self._space, self._provider, f)
 
     def __repr__(self) -> str:
         return (
