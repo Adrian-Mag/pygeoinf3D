@@ -1,6 +1,6 @@
 # pygeoinf3D Living Reference
 
-> **Status:** SOLA operator Phase 1 complete — forward-only volume-kernel measurement operator.
+> **Status:** SOLA operator Phase 2 complete — forward, dual, and adjoint mappings fully implemented.
 > **Last updated:** 2026-03-13
 
 ---
@@ -41,7 +41,7 @@ pygeoinf3D/
 │   ├── operators/
 │   │   ├── __init__.py
 │   │   ├── laplacian_box.py   # BoxLaplacian  ← Phase 3
-│   │   └── sola.py            # SOLAOperator3D  ← SOLA Phase 1
+│   │   └── sola.py            # SOLAOperator3D  ← SOLA Phase 1+2
 │   └── representations/       # Lebesgue coefficient architecture Phases 1-2
 │       ├── __init__.py        # Re-exports all representation public API
 │       ├── base.py            # CoefficientRepresentation3D (ABC), LebesgueCoefficientBackend (ABC)
@@ -69,7 +69,7 @@ pygeoinf3D/
 │   ├── operators/
 │   │   ├── __init__.py
 │   │   ├── test_box_laplacian.py     ← Phase 3
-│   │   └── test_sola.py             ← SOLA Phase 1
+│   │   └── test_sola.py             ← SOLA Phase 1+2
 │   └── representations/              # Lebesgue coefficient architecture Phases 1-2
 │       ├── __init__.py
 │       ├── test_lebesgue_representation.py  ← architecture Phase 1
@@ -417,8 +417,10 @@ same structure with cosines and normalisation factor $1/\sqrt{L}$ for k=0.
 
 ### `SOLAOperator3D` — `pygeoinf3d.operators.sola`
 
-Forward measurement operator stacking volume-kernel forms into a finite-dimensional codomain.
-Inherits from `pygeoinf.LinearOperator`.  **Phase 1: forward mapping only.**
+Measurement operator stacking volume-kernel forms into a finite-dimensional
+codomain.  Inherits from `pygeoinf.LinearOperator`.  **Phase 2 complete:**
+forward, dual, and adjoint mappings all implemented basis-free on the domain
+side.
 
 ```python
 SOLAOperator3D(
@@ -435,6 +437,17 @@ $$Af = \bigl(\ell_1(f),\,\ldots,\,\ell_m(f)\bigr) \in W, \quad
 Output is assembled as `codomain.from_components(raw_components)` where
 `raw_components[i] = measurements[i](f)`.
 
+**Dual mapping** ($A^*: W^* \to V^*$):
+$$A^*(y') = \sum_i c_i \ell_i, \quad c = \texttt{codomain.dual.to\_components}(y').$$
+Returns a `VolumeKernel3D` with kernel $\sum_i c_i k_i$.
+Never calls `Lebesgue3D.to_components` or `from_components`.
+
+**Adjoint mapping** ($A^\dagger: W \to V$):
+```
+A†(y) = domain.from_dual(A*(codomain.to_dual(y)))
+```
+Correct for `EuclideanSpace` and `MassWeightedHilbertSpace` codomains.
+
 **Constructor validation:**
 - Raises `TypeError` if `domain` is not a `Lebesgue3D`.
 - Raises `ValueError` if `len(measurements) != codomain.dim`.
@@ -446,19 +459,15 @@ Output is assembled as `codomain.from_components(raw_components)` where
 |--------|-------------|
 | `.measurements` | Copy of the stored `list[VolumeKernel3D]` |
 | `.__call__(f)` | Forward mapping; returns codomain element via `from_components` |
+| `.dual(yp)` | Dual mapping; returns `VolumeKernel3D` weighted sum of measurements |
+| `.adjoint(y)` | Adjoint mapping; returns `Function3D` via Riesz round-trip |
 | `.domain` | The `Lebesgue3D` passed at construction |
 | `.codomain` | The finite-dimensional target space |
 
-**Phase 1 limitations:**
-- `dual_mapping` and `adjoint_mapping` are **not** provided to the base class.
-  The numerical default fallback from `pygeoinf.LinearOperator` is inherited and
-  is valid only for very small codomains.  Do not call `.dual` or `.adjoint` in
-  production until Phase 2 is implemented.
+**Design invariants:**
 - Does **not** call `Lebesgue3D.to_components` / `from_components` on the domain.
 - Does **not** use `LinearOperator.from_linear_forms`.
-
-**Planned Phase 2:** Explicit `dual_mapping` and `adjoint_mapping` via codomain
-Riesz map and domain `from_dual`.
+- Dual uses `codomain.dual.to_components(yp)`, **not** `codomain.to_components(y)`.
 
 ---
 
@@ -651,7 +660,7 @@ from pygeoinf3d import (
     BoxDomain,           # Phase 3
     TensorProductProvider, # Phase 3
     BoxLaplacian,        # Phase 3
-    SOLAOperator3D,      # SOLA Phase 1
+    SOLAOperator3D,      # SOLA Phase 1+2
     CoefficientRepresentation3D,  # Phase 4
     LebesgueRepresentation3D,     # Phase 4
     # Lebesgue coefficient architecture Phase 2 — Gram-aware backends
@@ -667,7 +676,7 @@ from pygeoinf3d import (
 
 | Phase | Addition |
 |-------|----------|
-| SOLA 2 | `SOLAOperator3D` dual/adjoint mappings via codomain Riesz map and `Lebesgue3D.from_dual` |
+| ~~SOLA 2~~ | ~~`SOLAOperator3D` dual/adjoint mappings via codomain Riesz map and `Lebesgue3D.from_dual`~~ **DONE** |
 | SOLA 3 | Provider-backed lazy measurement access in `SOLAOperator3D` |
 | SOLA 4 | Public API lock, export test, full reference update |
 | 4 | `Sobolev3D`, Bessel-Sobolev operators, and trace-ready structure on BoxDomain |
@@ -711,4 +720,4 @@ conda run -n inferences3 python -m pytest tests/ -q
 7. `Lebesgue3D` has `dim == 0` (basis-free Phase 2). `to_components`/`from_components` raise `NotImplementedError`. The inner product is derived from `to_dual` (pairing-first).
 8. `VolumeKernel3D` subclasses `pygeoinf.LinearForm` and overrides `_mapping_impl` to do numerical volume integration. Python's dynamic dispatch routes `__call__` through the override. This avoids the basis-enumeration assumption in `LinearForm._compute_components`. All arithmetic methods (`__add__`, `__sub__`, `__mul__`, `__neg__`, and in-place `__imul__`, `__iadd__`, `__isub__`) are explicitly overridden to keep the object kernel-backed; `LinearForm.__imul__` and `__iadd__` are especially dangerous because they mutate the fake `_components=np.zeros(0)` placeholder silently.
 9. `from_dual` is **conservative**: only accepts `VolumeKernel3D` objects owned by *this* space instance. Generic `LinearForm` objects and foreign-space kernels are rejected.
-10. `SOLAOperator3D` is **domain-side basis-free**: it uses `VolumeKernel3D.__call__` directly for each measurement without enumerating any domain basis. The `LinearOperator.from_linear_forms` factory is explicitly avoided. Codomain assembly is always via `codomain.from_components(raw_scalars)`, making the operator representation-independent on the output side too.
+10. `SOLAOperator3D` is **fully basis-free on the domain side**: it uses `VolumeKernel3D.__call__` directly for each measurement without enumerating any domain basis. `LinearOperator.from_linear_forms` is explicitly avoided. The **dual mapping** extracts codomain-dual coordinates via `codomain.dual.to_components(yp)` and returns a weighted `VolumeKernel3D` sum. The **adjoint mapping** chains `codomain.to_dual(y)` → dual mapping → `domain.from_dual(xp)`, making it correct for any finite-dimensional Hilbert codomain including `MassWeightedHilbertSpace`.

@@ -2,8 +2,8 @@
 
 Provides :class:`SOLAOperator3D`, a :class:`~pygeoinf.LinearOperator`
 subclass that stacks volume-kernel measurements into a finite-dimensional
-output.  The forward map is basis-free on the domain side and uses
-``codomain.from_components`` on the output side.
+output.  All three mappings (forward, dual, adjoint) are implemented
+basis-free on the domain side.
 
 Mathematical definition
 -----------------------
@@ -19,14 +19,35 @@ with kernel $k_i \\in V$:
 
 .. math::
 
-    \\ell_i(f) = \\int_\\Omega k_i(\\mathbf{x})\\, f(\\mathbf{x})\\,\\mathrm{d}V.
+    \\ell_i(f)
+    = \\int_\\Omega k_i(\\mathbf{x})\\, f(\\mathbf{x})\\,\\mathrm{d}V.
 
-Phase limitations
------------------
-**Phase 1 only: forward mapping.**  Dual and adjoint mappings are deferred
-to Phase 2.  The :class:`~pygeoinf.LinearOperator` base-class fallback for
-dual/adjoint (numerical matrix assembly from component enumeration) is
-inherited and is valid only for very low-dimensional codomains.
+Dual mapping
+------------
+The dual $A^* : W^* \\to V^*$ is given by
+
+.. math::
+
+    A^*(y') = \\sum_{i=1}^m c_i\\, \\ell_i,
+    \\qquad c_i = (y')_i,
+
+where $c = $ ``codomain.dual.to_components(y')``.
+The result is a :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D` whose
+kernel is $\\sum_i c_i k_i$.  No component machinery on the domain side is
+used.
+
+Adjoint mapping
+---------------
+The adjoint $A^\\dagger : W \\to V$ is computed as
+
+.. math::
+
+    A^\\dagger(y) = R_V^{-1}\\bigl(A^*(R_W(y))\\bigr),
+
+where $R_W$ is the Riesz map of the codomain (``codomain.to_dual``) and
+$R_V^{-1}$ is its domain inverse (``domain.from_dual``).  This is correct
+for any finite-dimensional Hilbert codomain, including
+:class:`~pygeoinf.MassWeightedHilbertSpace`.
 
 Design constraints
 ------------------
@@ -101,16 +122,12 @@ class SOLAOperator3D(LinearOperator):
 
     Notes
     -----
-    **Phase 1** provides the forward mapping only.  Explicit dual and
-    adjoint mappings are deliberately omitted and will be implemented in
-    Phase 2.  The :class:`~pygeoinf.LinearOperator` super-class numerical
-    fallback for dual/adjoint (slow matrix assembly via component
-    enumeration) is inherited but is not intended for production use.
-
-    The forward map does **not** touch
+    The forward, dual, and adjoint mappings are all basis-free on the
+    domain side.  No call to
     :meth:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D.to_components` or
-    :meth:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D.from_components` on
-    the domain side.
+    :meth:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D.from_components` is
+    made.  The adjoint is correct for any finite-dimensional Hilbert
+    codomain including :class:`~pygeoinf.MassWeightedHilbertSpace`.
     """
 
     def __init__(
@@ -126,6 +143,12 @@ class SOLAOperator3D(LinearOperator):
             )
 
         measurements = list(measurements)
+
+        if not measurements:
+            raise ValueError(
+                "SOLAOperator3D requires at least one measurement "
+                "(codomain.dim must be positive)."
+            )
 
         if len(measurements) != codomain.dim:
             raise ValueError(
@@ -149,23 +172,22 @@ class SOLAOperator3D(LinearOperator):
 
         self._measurements: list[VolumeKernel3D] = measurements
 
-        # Phase 1: forward mapping only.
-        # Dual and adjoint mappings are intentionally deferred to Phase 2.
-        # The LinearOperator base class will fall back to slow numerical
-        # dual/adjoint if called, which is safe for small codomains only.
         super().__init__(
             domain,
             codomain,
             self._forward,
-            # dual_mapping and adjoint_mapping intentionally omitted (Phase 1).
+            dual_mapping=self._dual_mapping,
+            adjoint_mapping=self._adjoint_mapping,
         )
 
     # ------------------------------------------------------------------
-    # Internal forward mapping
+    # Internal mappings
     # ------------------------------------------------------------------
 
     def _forward(self, f) -> object:
-        """Evaluate each measurement on *f* and return the realised codomain element.
+        """Evaluate each measurement on *f*.
+
+        Return the realised codomain element.
 
         Args:
             f: A :class:`~pygeoinf3d.core.functions.Function3D` from the
@@ -181,6 +203,43 @@ class SOLAOperator3D(LinearOperator):
             dtype=float,
         )
         return self.codomain.from_components(raw)
+
+    def _dual_mapping(self, yp) -> VolumeKernel3D:
+        """Dual map $A^*: W^* \\to V^*$.
+
+        Extracts codomain-dual coordinates and returns the corresponding
+        weighted sum of the measurement forms as a
+        :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D`.
+
+        Args:
+            yp: An element of the codomain dual space (a
+                :class:`~pygeoinf.LinearForm` on the codomain).
+
+        Returns:
+            A :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D` equal to
+            $\\sum_i c_i \\ell_i$ where $c_i$ are the dual coordinates of *yp*.
+        """
+        c = self.codomain.dual.to_components(yp)
+        result = float(c[0]) * self._measurements[0]
+        for i in range(1, len(self._measurements)):
+            result = result + float(c[i]) * self._measurements[i]
+        return result
+
+    def _adjoint_mapping(self, y):
+        """Adjoint map $A^\\dagger: W \\to V$.
+
+        Applies the codomain Riesz map, the dual mapping, then the domain
+        inverse-Riesz map.
+
+        Args:
+            y: An element of the codomain.
+
+        Returns:
+            A :class:`~pygeoinf3d.core.functions.Function3D` in the domain.
+        """
+        yp = self.codomain.to_dual(y)
+        xp = self._dual_mapping(yp)
+        return self.domain.from_dual(xp)
 
     # ------------------------------------------------------------------
     # Public accessors
