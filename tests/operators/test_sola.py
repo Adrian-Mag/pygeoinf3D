@@ -1,11 +1,11 @@
-"""Tests for pygeoinf3d.operators.sola.SOLAOperator3D (Phase 1 + 2).
+"""Tests for pygeoinf3d.operators.sola.SOLAOperator3D (Phase 1 + 2 + 3 + 4).
 
 Covers (Phase 1):
 - Forward evaluation matches analytic integrals for known kernels
 - Custom codomain realization via from_components is used
 - Rejection of mismatched measurement counts
-- Rejection of non-VolumeKernel3D measurements
-- Rejection of measurements from a different Lebesgue3D instance
+- Rejection of non-VolumeKernel3D kernels
+- Rejection of kernels from a different Lebesgue3D instance
 - Rejection of non-Lebesgue3D domain
 - SOLAOperator3D is a LinearOperator instance
 
@@ -14,6 +14,17 @@ Covers (Phase 2):
     weighted sum of forms
 - Adjoint identity holds for EuclideanSpace codomain (pairing test)
 - Adjoint identity holds for MassWeightedHilbertSpace codomain
+
+Covers (Phase 3):
+- SOLAOperator3D accepts a KernelProvider3D (provider-backed construction)
+- Provider-backed forward map matches sequence-backed forward map
+- KernelProvider3D cache returns stable (identity-equal) kernel objects
+
+Covers (Phase 4):
+- Top-level pygeoinf3d exports SOLAOperator3D, FunctionProvider3D,
+    KernelProvider3D, FunctionToKernelAdapter (names and identity)
+- pygeoinf3d.__all__ contains all four SOLA symbols
+- pygeoinf3d.operators exports SOLAOperator3D
 """
 
 from __future__ import annotations
@@ -97,7 +108,7 @@ class TestSOLAForwardAnalytic:
         self, unit_box, space
     ):
         """
-        Two measurements on f(x) = x₀ over [0,1]³:
+        Two kernels on f(x) = x₀ over [0,1]³:
 
         ∫_{[0,1]³} 1 · x₀ dV  = 0.5
         ∫_{[0,1]³} 2x₀ · x₀ dV = 2 ∫ x₀² dV = 2/3
@@ -182,7 +193,7 @@ class TestSOLACustomCodomainRealization:
         A codomain whose ``from_components`` reverses the component vector
         must produce reversed output.
 
-        Measurements on f(x) = x₀:
+        Kernels on f(x) = x₀:
           m₁: kernel=1   → raw component 0.5
           m₂: kernel=2   → raw component 1.0
 
@@ -242,20 +253,20 @@ class TestSOLAValidation:
 
     def test_sola_rejects_mismatched_kernel_counts(self, unit_box, space):
         """
-        3 measurements with a dim-2 codomain must raise ValueError.
+        3 kernels with a dim-2 codomain must raise ValueError.
         """
-        measurements = [
+        kernels = [
             VolumeKernel3D(space, const_fn(unit_box, float(i)))
             for i in range(3)
         ]
         codomain = EuclideanSpace(2)
 
-        with pytest.raises(ValueError, match="Number of measurements"):
-            SOLAOperator3D(space, codomain, measurements)
+        with pytest.raises(ValueError, match="Number of kernels"):
+            SOLAOperator3D(space, codomain, kernels)
 
-    def test_sola_rejects_non_volume_kernel_measurement(self, unit_box, space):
+    def test_sola_rejects_non_volume_kernel_kernel(self, unit_box, space):
         """
-        A non-VolumeKernel3D item in the measurements list must raise
+        A non-VolumeKernel3D item in the kernels list must raise
         TypeError.
         """
         vk = VolumeKernel3D(space, const_fn(unit_box, 1.0))
@@ -264,7 +275,7 @@ class TestSOLAValidation:
         with pytest.raises(TypeError, match="VolumeKernel3D"):
             SOLAOperator3D(space, codomain, [vk, "not_a_kernel"])
 
-    def test_sola_rejects_wrong_domain_measurement(self, unit_box):
+    def test_sola_rejects_wrong_domain_kernel(self, unit_box):
         """
         A VolumeKernel3D from a different Lebesgue3D instance must raise
         ValueError.
@@ -288,26 +299,26 @@ class TestSOLAValidation:
         with pytest.raises(TypeError, match="Lebesgue3D"):
             SOLAOperator3D(fake_domain, codomain, [])
 
-    def test_sola_rejects_zero_measurements(self, space):
+    def test_sola_rejects_zero_kernels(self, space):
         """
-        An empty measurement list must raise ValueError at construction time,
+        An empty kernels list must raise ValueError at construction time,
         guarding against an IndexError in _dual_mapping on empty coordinates.
         The guard fires before the len != codomain.dim check.
         """
-        with pytest.raises(ValueError, match="at least one measurement"):
+        with pytest.raises(ValueError, match="at least one kernel"):
             SOLAOperator3D(space, EuclideanSpace(1), [])
 
-    def test_sola_measurements_property_returns_copy(self, unit_box, space):
+    def test_sola_kernels_property_returns_copy(self, unit_box, space):
         """
-        The .measurements property returns a copy; external mutation is safe.
+        The .kernels property returns a copy; external mutation is safe.
         """
         vk = VolumeKernel3D(space, const_fn(unit_box, 1.0))
         codomain = EuclideanSpace(1)
         op = SOLAOperator3D(space, codomain, [vk])
 
-        meas = op.measurements
-        meas.clear()
-        assert len(op.measurements) == 1
+        kernels = op.kernels
+        kernels.clear()
+        assert len(op.kernels) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -330,12 +341,12 @@ def _make_mass_weighted_codomain(underlying_space, mass_diag):
 class TestSOLADualMapping:
     """Dual mapping extracts codomain-dual coordinates.
 
-    The result is the weighted sum of the measurement forms.
+    The result is the weighted sum of the kernel-induced forms.
     """
 
     def test_sola_dual_uses_codomain_dual_coordinates(self, unit_box, space):
         """
-        For measurements m₁ (kernel=1), m₂ (kernel=x₀) and dual element
+        For kernels k₁ = 1 and k₂ = x₀, and a dual element
         yp with components [3, 5], the dual result xp must satisfy:
 
             xp(g) = 3 * m₁(g) + 5 * m₂(g)
@@ -436,3 +447,216 @@ class TestSOLAAdjoints:
         lhs = space.inner_product(op.adjoint(y), f)
         rhs = codomain.inner_product(y, op(f))
         npt.assert_allclose(lhs, rhs, rtol=5e-3, atol=5e-3)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 tests: provider-backed lazy kernel access
+# ---------------------------------------------------------------------------
+
+class TestSOLAProviderBacked:
+    """Phase 3: SOLAOperator3D accepts a KernelProvider3D for lazy access."""
+
+    def test_sola_accepts_volume_kernel_provider(self, unit_box, space):
+        """SOLAOperator3D can be constructed with a FunctionToKernelAdapter.
+
+        The operator must be a LinearOperator instance with the correct
+        codomain dimension.
+        """
+        from pygeoinf3d.providers.base import FunctionToKernelAdapter
+        from pygeoinf3d.providers.tensor_product import TensorProductProvider
+
+        provider = TensorProductProvider(
+            unit_box, truncation=2, bc_type='dirichlet'
+        )
+        adapter = FunctionToKernelAdapter(provider, space)
+        codomain = EuclideanSpace(adapter.dim)
+
+        op = SOLAOperator3D(space, codomain, adapter)
+
+        assert isinstance(op, LinearOperator)
+        assert op.codomain.dim == adapter.dim
+
+    def test_sola_lazy_provider_access_matches_list_kernels(
+        self, unit_box, space
+    ):
+        """Provider-backed forward map equals sequence-backed forward map.
+
+        Build two operators — one with an explicit kernel list, one with
+        a FunctionToKernelAdapter — and verify they produce the same output
+        for a constant test function.
+        """
+        from pygeoinf3d.providers.base import FunctionToKernelAdapter
+        from pygeoinf3d.providers.tensor_product import TensorProductProvider
+
+        provider = TensorProductProvider(
+            unit_box, truncation=2, bc_type='dirichlet'
+        )
+        m = provider.dim  # 8 modes
+        adapter = FunctionToKernelAdapter(provider, space)
+        codomain = EuclideanSpace(m)
+
+        # Sequence-backed operator
+        kernels_list = [
+            VolumeKernel3D(space, provider.get_eigenfunction(i))
+            for i in range(m)
+        ]
+        op_seq = SOLAOperator3D(space, codomain, kernels_list)
+
+        # Provider-backed operator
+        op_prov = SOLAOperator3D(space, codomain, adapter)
+
+        f = const_fn(unit_box, 1.0)
+        y_seq = op_seq(f)
+        y_prov = op_prov(f)
+
+        npt.assert_allclose(y_prov, y_seq, rtol=1e-10, atol=1e-10)
+
+    def test_sola_provider_cache_returns_stable_kernels(
+        self, unit_box, space
+    ):
+        """Repeated _get_kernel(i) calls return the same VolumeKernel3D object.
+
+        The cache must ensure that the provider's get_kernel is not called
+        more than once per index, and the returned objects are identity-equal.
+        """
+        from pygeoinf3d.providers.base import FunctionToKernelAdapter
+        from pygeoinf3d.providers.tensor_product import TensorProductProvider
+
+        provider = TensorProductProvider(
+            unit_box, truncation=2, bc_type='dirichlet'
+        )
+        adapter = FunctionToKernelAdapter(provider, space)
+        codomain = EuclideanSpace(provider.dim)
+        op = SOLAOperator3D(space, codomain, adapter)
+
+        # First and second access to the same index must be identity-equal
+        k0_first = op._get_kernel(0)
+        k0_second = op._get_kernel(0)
+        assert k0_first is k0_second, (
+            "_get_kernel(0) returned different objects on repeated calls; "
+            "cache is not working."
+        )
+
+        # Access through .kernels must also use the cache
+        ks1 = op.kernels
+        ks2 = op.kernels
+        assert len(ks1) == provider.dim
+        for vk in ks1:
+            assert isinstance(vk, VolumeKernel3D)
+        # Same cached objects across two .kernels calls
+        for kk1, kk2 in zip(ks1, ks2):
+            assert kk1 is kk2, (
+                ".kernels did not return identity-equal elements on "
+                "repeated calls."
+            )
+
+    def test_function_to_kernel_adapter_uses_generic_get_function(
+        self, unit_box, space
+    ):
+        """The adapter depends on generic function-provider naming.
+
+        A provider with ``get_function`` but no ``get_eigenfunction`` must
+        still work.
+        """
+        from pygeoinf3d.providers.base import FunctionToKernelAdapter
+
+        class ConstantFunctionProvider:
+            @property
+            def dim(self) -> int:
+                return 1
+
+            def get_function(self, i: int) -> Function3D:
+                if i != 0:
+                    raise IndexError(i)
+                return const_fn(unit_box, 2.0)
+
+        provider = ConstantFunctionProvider()
+        adapter = FunctionToKernelAdapter(provider, space)
+        kernel = adapter.get_kernel(0)
+
+        test_function = const_fn(unit_box, 3.0)
+        npt.assert_allclose(kernel(test_function), 6.0, rtol=1e-10, atol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 tests: public export surface lock
+# ---------------------------------------------------------------------------
+
+class TestPhase4PublicAPIExports:
+    """Phase 4: public export surface is locked via import-level assertions.
+
+    These tests verify that all SOLA symbols are re-exported at the
+    expected package boundaries.  Any accidental removal from __all__ or
+    the top-level namespace will cause exactly these tests to fail first,
+    making regressions in the public API immediately visible.
+
+    Extension-boundary note
+    -----------------------
+    The forward and dual APIs are representation-independent: they work
+    for any VolumeKernel3D sequence or KernelProvider3D without touching
+    domain coefficients.  The adjoint mapping is narrower: it relies on
+    ``domain.from_dual(xp)`` to realise the dual element as a primal
+    Function3D, and ``Lebesgue3D.from_dual`` currently only accepts
+    VolumeKernel3D instances owned by that same space instance.  Because
+    ``SOLAOperator3D.dual()`` always returns a VolumeKernel3D, the
+    round-trip holds — but only due to this alignment.  Any future
+    operator subclass that changes the dual-mapping return type must
+    either extend ``from_dual`` or override ``adjoint`` accordingly.
+    """
+
+    def test_top_level_exports_sola_operator(self):
+        """pygeoinf3d.SOLAOperator3D exists and is the canonical class."""
+        import pygeoinf3d
+        assert hasattr(pygeoinf3d, "SOLAOperator3D")
+        assert pygeoinf3d.SOLAOperator3D is SOLAOperator3D
+
+    def test_top_level_exports_function_provider(self):
+        """pygeoinf3d.FunctionProvider3D is importable at the top level."""
+        import pygeoinf3d
+        from pygeoinf3d.providers.base import FunctionProvider3D
+        assert hasattr(pygeoinf3d, "FunctionProvider3D")
+        assert pygeoinf3d.FunctionProvider3D is FunctionProvider3D
+
+    def test_top_level_exports_kernel_provider(self):
+        """pygeoinf3d.KernelProvider3D is importable at the top level."""
+        import pygeoinf3d
+        from pygeoinf3d.providers.base import KernelProvider3D
+        assert hasattr(pygeoinf3d, "KernelProvider3D")
+        assert pygeoinf3d.KernelProvider3D is KernelProvider3D
+
+    def test_top_level_exports_function_to_kernel_adapter(self):
+        """FunctionToKernelAdapter is importable at the top level."""
+        import pygeoinf3d
+        from pygeoinf3d.providers.base import FunctionToKernelAdapter
+        assert hasattr(pygeoinf3d, "FunctionToKernelAdapter")
+        assert pygeoinf3d.FunctionToKernelAdapter is FunctionToKernelAdapter
+
+    def test_operators_subpackage_exports_sola_operator(self):
+        """pygeoinf3d.operators.SOLAOperator3D is the same class object."""
+        from pygeoinf3d.operators import SOLAOperator3D as SOLAFromOperators
+        assert SOLAFromOperators is SOLAOperator3D
+
+    def test_operators_dunder_all_contains_sola_operator(self):
+        """SOLAOperator3D appears in pygeoinf3d.operators.__all__."""
+        import pygeoinf3d.operators
+        assert "SOLAOperator3D" in pygeoinf3d.operators.__all__
+
+    def test_sola_operator_in_dunder_all(self):
+        """SOLAOperator3D appears in pygeoinf3d.__all__."""
+        import pygeoinf3d
+        assert "SOLAOperator3D" in pygeoinf3d.__all__
+
+    def test_function_provider_in_dunder_all(self):
+        """FunctionProvider3D appears in pygeoinf3d.__all__."""
+        import pygeoinf3d
+        assert "FunctionProvider3D" in pygeoinf3d.__all__
+
+    def test_kernel_provider_in_dunder_all(self):
+        """KernelProvider3D appears in pygeoinf3d.__all__."""
+        import pygeoinf3d
+        assert "KernelProvider3D" in pygeoinf3d.__all__
+
+    def test_function_to_kernel_adapter_in_dunder_all(self):
+        """FunctionToKernelAdapter appears in pygeoinf3d.__all__."""
+        import pygeoinf3d
+        assert "FunctionToKernelAdapter" in pygeoinf3d.__all__

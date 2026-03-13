@@ -24,11 +24,11 @@ Implement a representation-independent SOLA-style measurement operator for pygeo
 3. **Phase 3: Add Measurement Providers And Lazy Access**
     - **Objective:** Support provider-backed measurement families on the dual side without introducing basis providers or representation coupling.
     - **Files/Functions to Modify/Create:** `pygeoinf3d/operators/sola.py`, `pygeoinf3d/providers/__init__.py`, optionally `pygeoinf3d/providers/base.py`, `tests/operators/test_sola.py`
-    - **Tests to Write:** `test_sola_accepts_volume_kernel_provider`, `test_sola_lazy_provider_access_matches_list_measurements`, `test_sola_provider_cache_returns_stable_measurements`
+    - **Tests to Write:** `test_sola_accepts_volume_kernel_provider`, `test_sola_lazy_provider_access_matches_list_kernels`, `test_sola_provider_cache_returns_stable_kernels`
     - **Steps:**
         1. Write failing tests for indexed measurement access through provider-backed volume kernels.
-        2. Introduce a minimal provider abstraction or provider protocol for indexed dual measurements and implement lazy retrieval in the operator.
-        3. Run operator tests to verify list-backed and provider-backed measurements agree exactly.
+        2. Introduce a minimal provider abstraction or provider protocol for indexed kernels and implement lazy retrieval in the operator.
+        3. Run operator tests to verify list-backed and provider-backed kernels agree exactly.
 
 4. **Phase 4: Document Extension Boundaries**
     - **Objective:** Record the operator API, representation-independence guarantees, and the future boundary between generic dual measurements and Riesz-representable adjoints.

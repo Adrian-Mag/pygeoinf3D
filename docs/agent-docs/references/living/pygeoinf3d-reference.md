@@ -1,6 +1,6 @@
 # pygeoinf3D Living Reference
 
-> **Status:** SOLA operator Phase 2 complete — forward, dual, and adjoint mappings fully implemented.
+> **Status:** SOLA operator Phase 4 complete — API locked with export tests and extension boundary documented.
 > **Last updated:** 2026-03-13
 
 ---
@@ -36,12 +36,13 @@ pygeoinf3D/
 │   │       ├── __init__.py
 │   │       └── domain.py    # BoxDomain  ← Phase 3
 │   ├── providers/
-│   │   ├── __init__.py
+│   │   ├── __init__.py        # Re-exports FunctionProvider3D, KernelProvider3D, FunctionToKernelAdapter, TensorProductProvider
+│   │   ├── base.py            # FunctionProvider3D (ABC), KernelProvider3D (ABC), FunctionToKernelAdapter  ← SOLA Phase 3
 │   │   └── tensor_product.py  # TensorProductProvider  ← Phase 3
 │   ├── operators/
 │   │   ├── __init__.py
 │   │   ├── laplacian_box.py   # BoxLaplacian  ← Phase 3
-│   │   └── sola.py            # SOLAOperator3D  ← SOLA Phase 1+2
+│   │   └── sola.py            # SOLAOperator3D  ← SOLA Phase 1+2+3
 │   └── representations/       # Lebesgue coefficient architecture Phases 1-2
 │       ├── __init__.py        # Re-exports all representation public API
 │       ├── base.py            # CoefficientRepresentation3D (ABC), LebesgueCoefficientBackend (ABC)
@@ -69,7 +70,7 @@ pygeoinf3D/
 │   ├── operators/
 │   │   ├── __init__.py
 │   │   ├── test_box_laplacian.py     ← Phase 3
-│   │   └── test_sola.py             ← SOLA Phase 1+2
+│   │   └── test_sola.py             ← SOLA Phase 1+2+3+4
 │   └── representations/              # Lebesgue coefficient architecture Phases 1-2
 │       ├── __init__.py
 │       ├── test_lebesgue_representation.py  ← architecture Phase 1
@@ -411,31 +412,36 @@ same structure with cosines and normalisation factor $1/\sqrt{L}$ for k=0.
 | `.get_index(multi_index)` | Flat index; raises `KeyError` if not in truncation |
 | `.get_eigenvalue(i)` | Eigenvalue λ = $(k_x\pi/L_x)^2 + (k_y\pi/L_y)^2 + (k_z\pi/L_z)^2$ |
 | `.get_eigenfunction(i)` | `Function3D` computing φ_i; handles `(3,)` and `(n,3)` |
+| `.get_function(i)` | Alias for `.get_eigenfunction(i)` to satisfy generic function-provider consumers |
 | `__iter__` | Yields `(eigenvalue, Function3D)` pairs |
 
 ---
 
 ### `SOLAOperator3D` — `pygeoinf3d.operators.sola`
 
-Measurement operator stacking volume-kernel forms into a finite-dimensional
-codomain.  Inherits from `pygeoinf.LinearOperator`.  **Phase 2 complete:**
-forward, dual, and adjoint mappings all implemented basis-free on the domain
-side.
+Measurement operator stacking volume kernels into a finite-dimensional
+codomain.  Inherits from `pygeoinf.LinearOperator`.  **Phase 4 complete:**
+forward, dual, and adjoint mappings all basis-free on the domain side;
+provider-backed lazy + cached kernel access; public API locked with export
+tests; extension boundary documented (see below).
 
 ```python
 SOLAOperator3D(
     domain: Lebesgue3D,
-    codomain,                         # any HilbertSpace with dim == len(measurements)
-    measurements: Sequence[VolumeKernel3D],
+    codomain,                         # any HilbertSpace with dim == n_kernels
+    kernels: Sequence[VolumeKernel3D] | KernelProvider3D,
 )
 ```
+
+Accepts either a **sequence** of `VolumeKernel3D` objects (eager, sequence-backed)
+or a **`KernelProvider3D`** instance (lazy, provider-backed with internal caching).
 
 The operator evaluates:
 $$Af = \bigl(\ell_1(f),\,\ldots,\,\ell_m(f)\bigr) \in W, \quad
     \ell_i(f) = \int_\Omega k_i(\mathbf{x})\,f(\mathbf{x})\,\mathrm{d}V.$$
 
 Output is assembled as `codomain.from_components(raw_components)` where
-`raw_components[i] = measurements[i](f)`.
+`raw_components[i] = kernels[i](f)`.
 
 **Dual mapping** ($A^*: W^* \to V^*$):
 $$A^*(y') = \sum_i c_i \ell_i, \quad c = \texttt{codomain.dual.to\_components}(y').$$
@@ -448,18 +454,23 @@ A†(y) = domain.from_dual(A*(codomain.to_dual(y)))
 ```
 Correct for `EuclideanSpace` and `MassWeightedHilbertSpace` codomains.
 
-**Constructor validation:**
+**Constructor validation (sequence-backed):**
 - Raises `TypeError` if `domain` is not a `Lebesgue3D`.
-- Raises `ValueError` if `len(measurements) != codomain.dim`.
-- Raises `TypeError` if any element of `measurements` is not a `VolumeKernel3D`.
-- Raises `ValueError` if any measurement's `.domain` is not the exact same
+- Raises `ValueError` if `len(kernels) != codomain.dim`.
+- Raises `TypeError` if any element of `kernels` is not a `VolumeKernel3D`.
+- Raises `ValueError` if any kernel's `.domain` is not the exact same
   `Lebesgue3D` instance as `domain` (identity check).
+
+**Constructor validation (provider-backed):**
+- Same `TypeError` / `ValueError` for domain/dim checks.
+- Per-kernel compatibility is deferred to first access (lazy).
 
 | Member | Description |
 |--------|-------------|
-| `.measurements` | Copy of the stored `list[VolumeKernel3D]` |
+| `.kernels` | Realized `list[VolumeKernel3D]`; for sequence mode returns copy; for provider mode, materializes lazily via cache |
+| `._get_kernel(i)` | Internal: returns `_kernels[i]` (sequence) or cached `_provider.get_kernel(i)` (provider) |
 | `.__call__(f)` | Forward mapping; returns codomain element via `from_components` |
-| `.dual(yp)` | Dual mapping; returns `VolumeKernel3D` weighted sum of measurements |
+| `.dual(yp)` | Dual mapping; returns weighted `VolumeKernel3D` sum of kernels |
 | `.adjoint(y)` | Adjoint mapping; returns `Function3D` via Riesz round-trip |
 | `.domain` | The `Lebesgue3D` passed at construction |
 | `.codomain` | The finite-dimensional target space |
@@ -468,6 +479,92 @@ Correct for `EuclideanSpace` and `MassWeightedHilbertSpace` codomains.
 - Does **not** call `Lebesgue3D.to_components` / `from_components` on the domain.
 - Does **not** use `LinearOperator.from_linear_forms`.
 - Dual uses `codomain.dual.to_components(yp)`, **not** `codomain.to_components(y)`.
+- Provider-backed mode uses `self._kernel_cache: dict[int, VolumeKernel3D]` to ensure repeated `_get_kernel(i)` calls return identical objects.
+
+**Extension boundary (Phase 4):**
+
+The forward and dual APIs are **representation-independent**: they work for any `VolumeKernel3D` sequence or `KernelProvider3D` without accessing domain coefficients or any basis.
+
+The adjoint (`A†`) is **narrower**: it calls `domain.from_dual(xp)` to realise the dual element as a primal `Function3D`. `Lebesgue3D.from_dual` currently only accepts `VolumeKernel3D` instances that belong to the **same space instance**. Because `SOLAOperator3D.dual()` always returns a `VolumeKernel3D` on the same domain, the round-trip holds for all current usage — but only due to this alignment.
+
+Consequence for extensibility:
+- **Safe to generalise**: new kernel families (e.g. surface integrals, point evaluations) can be plugged in via a custom `KernelProvider3D` and will work directly with the forward and dual mappings.
+- **Requires care for adjoint**: if a future subclass changes the dual-mapping return type to something other than a `VolumeKernel3D`, `domain.from_dual` will raise `TypeError`. To support adjoint on such spaces, either override `adjoint` in the subclass or extend `Lebesgue3D.from_dual` to handle the new dual type.
+
+---
+
+### `FunctionProvider3D` — `pygeoinf3d.providers.base`
+
+Abstract base for objects that supply `Function3D` on indexed demand.
+
+```python
+class FunctionProvider3D(ABC):
+    @property
+    @abstractmethod
+    def dim(self) -> int: ...
+
+    @abstractmethod
+    def get_function(self, i: int) -> Function3D: ...
+```
+
+| Member | Description |
+|--------|-------------|
+| `.dim` | **Abstract** — total number of functions |
+| `.get_function(i)` | **Abstract** — return the *i*-th `Function3D`; raises `IndexError` if out of range |
+
+---
+
+### `KernelProvider3D` — `pygeoinf3d.providers.base`
+
+Abstract base for objects that supply `VolumeKernel3D` on indexed demand.
+
+```python
+class KernelProvider3D(ABC):
+    @property
+    @abstractmethod
+    def dim(self) -> int: ...
+
+    @abstractmethod
+    def get_kernel(self, i: int) -> VolumeKernel3D: ...
+```
+
+| Member | Description |
+|--------|-------------|
+| `.dim` | **Abstract** — total number of kernels |
+| `.get_kernel(i)` | **Abstract** — return the *i*-th `VolumeKernel3D`; raises `IndexError` if out of range |
+
+Designed for structural subtyping (ABC).  Custom providers inherit from it.
+`FunctionToKernelAdapter` is the standard concrete implementation.
+
+---
+
+### `FunctionToKernelAdapter` — `pygeoinf3d.providers.base`
+
+Adapts a `Function3D` provider (e.g. `TensorProductProvider`) into a `KernelProvider3D`.
+
+```python
+FunctionToKernelAdapter(function_provider, space: Lebesgue3D)
+```
+
+`function_provider` must expose `dim: int` and `get_function(i: int) -> Function3D`.
+
+| Member | Description |
+|--------|-------------|
+| `.dim` | Delegates to `function_provider.dim` |
+| `.get_kernel(i)` | Returns `VolumeKernel3D(space, function_provider.get_function(i))` |
+
+Compatibility between `function_provider` and `space` is validated lazily:
+`VolumeKernel3D` will raise `ValueError` on the first call if the provider's domain
+does not match `space.function_domain` (identity check).
+
+**Typical usage:**
+```python
+box = BoxDomain(np.zeros(3), np.ones(3))
+space = Lebesgue3D(box)
+provider = TensorProductProvider(box, truncation=4, bc_type='dirichlet')
+adapter = FunctionToKernelAdapter(provider, space)
+op = SOLAOperator3D(space, EuclideanSpace(adapter.dim), adapter)
+```
 
 ---
 
@@ -659,8 +756,11 @@ from pygeoinf3d import (
     VolumeKernel3D,      # Phase 2
     BoxDomain,           # Phase 3
     TensorProductProvider, # Phase 3
+    FunctionProvider3D,  # SOLA Phase 3
+    KernelProvider3D,    # SOLA Phase 3
+    FunctionToKernelAdapter, # SOLA Phase 3
     BoxLaplacian,        # Phase 3
-    SOLAOperator3D,      # SOLA Phase 1+2
+    SOLAOperator3D,      # SOLA Phase 1+2+3
     CoefficientRepresentation3D,  # Phase 4
     LebesgueRepresentation3D,     # Phase 4
     # Lebesgue coefficient architecture Phase 2 — Gram-aware backends
@@ -677,8 +777,8 @@ from pygeoinf3d import (
 | Phase | Addition |
 |-------|----------|
 | ~~SOLA 2~~ | ~~`SOLAOperator3D` dual/adjoint mappings via codomain Riesz map and `Lebesgue3D.from_dual`~~ **DONE** |
-| SOLA 3 | Provider-backed lazy measurement access in `SOLAOperator3D` |
-| SOLA 4 | Public API lock, export test, full reference update |
+| ~~SOLA 3~~ | ~~Provider-backed lazy kernel access in `SOLAOperator3D` via `KernelProvider3D` and `FunctionToKernelAdapter`~~ **DONE** |
+| ~~SOLA 4~~ | ~~Public API lock, export test, full reference update~~ **DONE** |
 | 4 | `Sobolev3D`, Bessel-Sobolev operators, and trace-ready structure on BoxDomain |
 | 5 | `BallDomain` (StructuredDomain3D, spherical coordinates) |
 | 6 | Dual elements and geometric distributions (point/path/surface/volume) |
@@ -693,7 +793,7 @@ Run with:
 conda run -n inferences3 python -m pytest tests/ -q
 ```
 
-**317 tests reported passing** (foundation Phases 1-3 + coefficient architecture Phases 1-2 + SOLA Phase 1):
+**335 tests reported passing** (foundation Phases 1-3 + coefficient architecture Phases 1-2 + SOLA Phases 1-4):
 - `tests/core/test_config.py` — 13 tests
 - `tests/core/test_region.py` — 14 tests
 - `tests/core/test_domain_base.py` — 21 tests
@@ -705,7 +805,7 @@ conda run -n inferences3 python -m pytest tests/ -q
 - `tests/operators/test_box_laplacian.py` — 12 tests  ← Phase 3
 - `tests/representations/test_lebesgue_representation.py` — 22 tests  ← architecture Phase 1
 - `tests/representations/test_projection_backends.py` — 40 tests  ← architecture Phase 2
-- `tests/operators/test_sola.py` — 10 tests  ← SOLA Phase 1
+- `tests/operators/test_sola.py` — 28 tests  ← SOLA Phases 1+2+3+4
 
 ---
 
@@ -720,4 +820,5 @@ conda run -n inferences3 python -m pytest tests/ -q
 7. `Lebesgue3D` has `dim == 0` (basis-free Phase 2). `to_components`/`from_components` raise `NotImplementedError`. The inner product is derived from `to_dual` (pairing-first).
 8. `VolumeKernel3D` subclasses `pygeoinf.LinearForm` and overrides `_mapping_impl` to do numerical volume integration. Python's dynamic dispatch routes `__call__` through the override. This avoids the basis-enumeration assumption in `LinearForm._compute_components`. All arithmetic methods (`__add__`, `__sub__`, `__mul__`, `__neg__`, and in-place `__imul__`, `__iadd__`, `__isub__`) are explicitly overridden to keep the object kernel-backed; `LinearForm.__imul__` and `__iadd__` are especially dangerous because they mutate the fake `_components=np.zeros(0)` placeholder silently.
 9. `from_dual` is **conservative**: only accepts `VolumeKernel3D` objects owned by *this* space instance. Generic `LinearForm` objects and foreign-space kernels are rejected.
-10. `SOLAOperator3D` is **fully basis-free on the domain side**: it uses `VolumeKernel3D.__call__` directly for each measurement without enumerating any domain basis. `LinearOperator.from_linear_forms` is explicitly avoided. The **dual mapping** extracts codomain-dual coordinates via `codomain.dual.to_components(yp)` and returns a weighted `VolumeKernel3D` sum. The **adjoint mapping** chains `codomain.to_dual(y)` → dual mapping → `domain.from_dual(xp)`, making it correct for any finite-dimensional Hilbert codomain including `MassWeightedHilbertSpace`.
+10. `SOLAOperator3D` is **fully basis-free on the domain side**: it uses `VolumeKernel3D.__call__` directly for each kernel without enumerating any domain basis. `LinearOperator.from_linear_forms` is explicitly avoided. The **dual mapping** extracts codomain-dual coordinates via `codomain.dual.to_components(yp)` and returns a weighted `VolumeKernel3D` sum. The **adjoint mapping** chains `codomain.to_dual(y)` → dual mapping → `domain.from_dual(xp)`, making it correct for any finite-dimensional Hilbert codomain including `MassWeightedHilbertSpace`.
+11. `SOLAOperator3D` supports two construction modes: **sequence-backed** (eager, validates all kernels at construction) and **provider-backed** (lazy, kernels fetched via `KernelProvider3D.get_kernel(i)` on demand and cached in `_kernel_cache`). The internal `_get_kernel(i)` method is the single dispatch point that both `_forward` and `_dual_mapping` use. The `.kernels` property materializes the full list via `_get_kernel` in both modes (returning cached objects for provider mode).

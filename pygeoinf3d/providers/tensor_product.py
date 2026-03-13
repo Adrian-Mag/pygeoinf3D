@@ -340,6 +340,15 @@ class TensorProductProvider:
 
         return Function3D(self._box, evaluate_callable=evaluate)
 
+    def get_function(self, index: int) -> "Function3D":
+        """Return the *index*-th function in the provider.
+
+        For ``TensorProductProvider`` this is the same as
+        :meth:`get_eigenfunction`. The alias lets generic function-provider
+        consumers avoid spectral naming assumptions.
+        """
+        return self.get_eigenfunction(index)
+
     def __iter__(self):
         """Iterate over ``(eigenvalue, Function3D)`` pairs in order."""
         for i in range(self.dim):

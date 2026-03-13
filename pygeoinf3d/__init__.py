@@ -16,10 +16,15 @@ from .spaces.forms import VolumeKernel3D
 
 # Phase 3 — Box geometry, tensor-product provider, spectral Laplacian
 from .geometries.box.domain import BoxDomain
+from .providers.base import (
+    FunctionProvider3D,
+    FunctionToKernelAdapter,
+    KernelProvider3D,
+)
 from .providers.tensor_product import TensorProductProvider
 from .operators.laplacian_box import BoxLaplacian
 
-# SOLA operator — Phase 1: forward-only volume-kernel measurements
+# SOLA operator — Phases 1-4: volume-kernel operator core, API locked
 from .operators.sola import SOLAOperator3D
 
 # Lebesgue coefficient architecture Phase 1 — representation boundary
@@ -46,9 +51,12 @@ __all__ = [
     "VolumeKernel3D",
     # Phase 3 — Box geometry MVP
     "BoxDomain",
+    "FunctionProvider3D",
+    "KernelProvider3D",
+    "FunctionToKernelAdapter",
     "TensorProductProvider",
     "BoxLaplacian",
-    # SOLA operator — Phase 1
+    # SOLA operator — Phases 1-4
     "SOLAOperator3D",
     # Phase 4 — Representation boundary
     "CoefficientRepresentation3D",
