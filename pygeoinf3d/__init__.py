@@ -14,14 +14,25 @@ from .core.functions import Function3D
 from .spaces.lebesgue import Lebesgue3D
 from .spaces.forms import VolumeKernel3D
 
+# Phase 3 — Box geometry, tensor-product provider, spectral Laplacian
+from .geometries.box.domain import BoxDomain
+from .providers.tensor_product import TensorProductProvider
+from .operators.laplacian_box import BoxLaplacian
+
 __all__ = [
+    # Core geometry
     "AxisAlignedBoundingBox",
     "CoordinateSystem",
     "Region3D",
     "Domain3D",
     "StructuredDomain3D",
     "Boundary3D",
+    # Functions and spaces
     "Function3D",
     "Lebesgue3D",
     "VolumeKernel3D",
+    # Phase 3 — Box geometry MVP
+    "BoxDomain",
+    "TensorProductProvider",
+    "BoxLaplacian",
 ]

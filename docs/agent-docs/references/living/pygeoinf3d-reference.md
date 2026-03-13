@@ -1,7 +1,7 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Phase 2 complete — Function3D and Lebesgue3D with pairing-first design.
-> **Last updated:** 2026-03-12
+> **Status:** Phase 3 complete — BoxDomain, TensorProductProvider, BoxLaplacian.
+> **Last updated:** 2026-03-13
 
 ---
 
@@ -26,10 +26,21 @@ pygeoinf3D/
 │   │   ├── domain_base.py   # Domain3D, StructuredDomain3D
 │   │   ├── boundary.py      # Boundary3D
 │   │   └── functions.py     # Function3D  ← Phase 2
-│   └── spaces/
-│       ├── __init__.py      # Re-exports Lebesgue3D, VolumeKernel3D
-│       ├── forms.py         # VolumeKernel3D  ← Phase 2
-│       └── lebesgue.py      # Lebesgue3D  ← Phase 2
+│   ├── spaces/
+│   │   ├── __init__.py      # Re-exports Lebesgue3D, VolumeKernel3D
+│   │   ├── forms.py         # VolumeKernel3D  ← Phase 2
+│   │   └── lebesgue.py      # Lebesgue3D  ← Phase 2
+│   ├── geometries/
+│   │   ├── __init__.py
+│   │   └── box/
+│   │       ├── __init__.py
+│   │       └── domain.py    # BoxDomain  ← Phase 3
+│   ├── providers/
+│   │   ├── __init__.py
+│   │   └── tensor_product.py  # TensorProductProvider  ← Phase 3
+│   └── operators/
+│       ├── __init__.py
+│       └── laplacian_box.py   # BoxLaplacian  ← Phase 3
 ├── tests/
 │   ├── __init__.py
 │   ├── core/
@@ -38,10 +49,19 @@ pygeoinf3D/
 │   │   ├── test_region.py
 │   │   ├── test_domain_base.py
 │   │   ├── test_boundary.py
-│   │   └── test_functions.py     ← Phase 2
-│   └── spaces/
+│   │   └── test_functions.py         ← Phase 2
+│   ├── spaces/
+│   │   ├── __init__.py
+│   │   └── test_lebesgue.py          ← Phase 2
+│   ├── geometries/
+│   │   ├── __init__.py
+│   │   └── test_box_domain.py        ← Phase 3
+│   ├── providers/
+│   │   ├── __init__.py
+│   │   └── test_tensor_product.py    ← Phase 3
+│   └── operators/
 │       ├── __init__.py
-│       └── test_lebesgue.py      ← Phase 2
+│       └── test_box_laplacian.py     ← Phase 3
 └── docs/
     └── agent-docs/
         ├── active-plans/
@@ -307,6 +327,96 @@ parent's `_components` array, which is a fake `np.zeros(0)` placeholder in
 
 ---
 
+## Phase 3 Classes
+
+### `BoxDomain` — `pygeoinf3d.geometries.box.domain`
+
+Concrete `StructuredDomain3D` for axis-aligned boxes in ℝ³.
+
+```python
+BoxDomain(low_or_bbox: np.ndarray | AxisAlignedBoundingBox,
+          high: np.ndarray | None = None)
+```
+
+Accepts either `BoxDomain(low, high)` or `BoxDomain(AxisAlignedBoundingBox(...))`.
+
+| Member | Description |
+|--------|-------------|
+| `.bounding_box()` | Returns internal `AxisAlignedBoundingBox` |
+| `.center`, `.extents`, `.volume` | Properties from AABB |
+| `.coordinate_system` | `CoordinateSystem.CARTESIAN` |
+| `.contains(point)` | Direct AABB bounds test (overrides Domain3D default) |
+| `.sample_interior(n, rng)` | `rng.uniform(low, high, (n,3))` |
+| `.structured_mesh(resolution, location)` | `(N,3)` ndarray. `location='cell_centers'` (default) produces midpoints; `location='nodes'` produces boundary-inclusive linspace grid |
+| `.volume_weights(resolution, location)` | `(N,)` quadrature weights summing exactly to `volume` |
+| `.integrate_volume(f, resolution, location)` | Tensor-product midpoint/trapezoidal quadrature |
+| `.integrate_volume_on_mesh(values, weights)` | `np.dot(values, weights)` |
+| `.boundary` | `_BoxBoundary` — full surface |
+| `.boundary_components` | Dict `{'x_min','x_max','y_min','y_max','z_min','z_max'}` → `_BoxFaceBoundary` |
+
+**Private helpers:**
+- `_BoxSubset(Subset)` — wraps AABB; `is_element` uses coordinate bounds with `rtol` tolerance.
+- `_BoxBoundary(Boundary3D)` — `contains(point)` checks any of 6 faces.
+- `_BoxFaceBoundary(Boundary3D)` — single face. Args: `(parent_domain, axis: int, coord_value: float)`.
+
+---
+
+### `TensorProductProvider` — `pygeoinf3d.providers.tensor_product`
+
+Spectral basis manager for tensor-product eigenfunctions of − ∇² on a box.
+
+```python
+TensorProductProvider(domain_or_space,
+                      *,
+                      truncation: int | tuple[int,int,int] = (4,4,4),
+                      bc_type: str = 'dirichlet')
+```
+
+Accepts `BoxDomain` directly or any object with `.function_domain`.
+`bc_type` must be `'dirichlet'` or `'neumann'`.
+
+Eigenfunctions are sorted by ascending eigenvalue, with lexicographic `(kx,ky,kz)` tie-break.
+
+**Dirichlet modes** (kx,ky,kz ≥ 1):
+$$\phi_{k_x k_y k_z}(x,y,z) = \sqrt{\frac{8}{L_x L_y L_z}}\,\sin\!\left(\frac{k_x\pi(x-a_x)}{L_x}\right)\sin\!\left(\frac{k_y\pi(y-a_y)}{L_y}\right)\sin\!\left(\frac{k_z\pi(z-a_z)}{L_z}\right)$$
+
+**Neumann modes** (kx,ky,kz ≥ 0, with cosines, k=0 gives constant):
+same structure with cosines and normalisation factor $1/\sqrt{L}$ for k=0.
+
+| Member | Description |
+|--------|-------------|
+| `.dim` | `nx * ny * nz` — total number of modes |
+| `.get_multi_index(i)` | `(kx,ky,kz)` for flat index `i` |
+| `.get_index(multi_index)` | Flat index; raises `KeyError` if not in truncation |
+| `.get_eigenvalue(i)` | Eigenvalue λ = $(k_x\pi/L_x)^2 + (k_y\pi/L_y)^2 + (k_z\pi/L_z)^2$ |
+| `.get_eigenfunction(i)` | `Function3D` computing φ_i; handles `(3,)` and `(n,3)` |
+| `__iter__` | Yields `(eigenvalue, Function3D)` pairs |
+
+---
+
+### `BoxLaplacian` — `pygeoinf3d.operators.laplacian_box`
+
+Spectral negative Laplacian − ∇² on a box domain. Inherits from `pygeoinf.LinearOperator`.
+
+```python
+BoxLaplacian(space: Lebesgue3D,
+             provider: TensorProductProvider,
+             quad_resolution: int = 20)
+```
+
+Validates `space.function_domain is provider._box`. Constructed as self-adjoint via
+`LinearOperator.__init__(space, space, self._apply, adjoint_mapping=self._apply)`.
+
+**`_apply(f) → Function3D`:**
+1. Evaluate `f` at pre-computed quadrature mesh once.
+2. For each mode k: `c_k = ⟨f, φ_k⟩ ≈ Σ f(x_i) φ_k(x_i) w_i`.
+3. Return `Function3D` evaluating `Σ_k λ_k c_k φ_k(x)`.
+
+Quadrature mesh/weights are pre-computed at construction; all mode callables are
+pre-fetched and stored as a list for reuse across calls.
+
+---
+
 ## Public API (`pygeoinf3d.__init__`)
 
 ```python
@@ -317,9 +427,12 @@ from pygeoinf3d import (
     Domain3D,
     StructuredDomain3D,
     Boundary3D,
-    Function3D,     # Phase 2
-    Lebesgue3D,     # Phase 2
-    VolumeKernel3D, # Phase 2
+    Function3D,          # Phase 2
+    Lebesgue3D,          # Phase 2
+    VolumeKernel3D,      # Phase 2
+    BoxDomain,           # Phase 3
+    TensorProductProvider, # Phase 3
+    BoxLaplacian,        # Phase 3
 )
 ```
 
@@ -329,7 +442,6 @@ from pygeoinf3d import (
 
 | Phase | Addition |
 |-------|----------|
-| 3 | `BoxDomain` (StructuredDomain3D, Cartesian tensor-product) |
 | 4 | `Sobolev3D`, Bessel-Sobolev operators, and trace-ready structure on BoxDomain |
 | 5 | `BallDomain` (StructuredDomain3D, spherical coordinates) |
 | 6 | Dual elements and geometric distributions (point/path/surface/volume) |
@@ -344,13 +456,16 @@ Run with:
 conda run -n inferences3 python -m pytest tests/ -q
 ```
 
-**141 tests, all passing** (Phase 1 + Phase 2):
+**226 tests, all passing** (Phase 1 + Phase 2 + Phase 3):
 - `tests/core/test_config.py` — 13 tests
 - `tests/core/test_region.py` — 14 tests
 - `tests/core/test_domain_base.py` — 21 tests
 - `tests/core/test_boundary.py` — 8 tests
 - `tests/core/test_functions.py` — 37 tests  ← Phase 2
 - `tests/spaces/test_lebesgue.py` — 48 tests  ← Phase 2
+- `tests/geometries/test_box_domain.py` — 45 tests  ← Phase 3
+- `tests/providers/test_tensor_product.py` — 28 tests  ← Phase 3
+- `tests/operators/test_box_laplacian.py` — 12 tests  ← Phase 3
 
 ---
 
