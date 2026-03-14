@@ -1,6 +1,6 @@
 # pygeoinf3D Living Reference
 
-> **Status:** InverseBoxLaplacian operator added (spectral pseudo-inverse of `-Δ` with `null_space_handling` options: pseudoinverse / shift / strict). 23 new tests; full suite at 463 passed.
+> **Status:** `SpectralOperator3D` ABC added; `BoxLaplacian`/`InverseBoxLaplacian` retrofitted to satisfy it; `KLSampler3D` implemented in new `sampling/` sub-package. 33 new tests added; full suite at 496 passed.
 > **Last updated:** 2026-03-14
 
 ---
@@ -127,10 +127,14 @@ pygeoinf3D/
 │   │       ├── bump.py        # BumpProvider3D       ← kernel-providers Phase 2
 │   │       └── boxcar.py      # BoxcarProvider3D     ← kernel-providers Phase 2
 │   ├── operators/
-│   │   ├── __init__.py
-│   │   ├── laplacian_box.py   # BoxLaplacian  ← Phase 3
-│   │   ├── inverse_laplacian_box.py  # InverseBoxLaplacian  ← InverseLaplacian plan
+│   │   ├── __init__.py        # Re-exports SpectralOperator3D, BoxLaplacian, InverseBoxLaplacian, SOLAOperator3D
+│   │   ├── base.py            # SpectralOperator3D (ABC)  ← spectral-kl plan
+│   │   ├── laplacian_box.py   # BoxLaplacian  ← Phase 3 (now inherits SpectralOperator3D)
+│   │   ├── inverse_laplacian_box.py  # InverseBoxLaplacian  ← InverseLaplacian plan (now inherits SpectralOperator3D)
 │   │   └── sola.py            # SOLAOperator3D  ← SOLA Phase 1+2+3
+│   ├── sampling/              # KL expansion sampler  ← spectral-kl plan
+│   │   ├── __init__.py        # Re-exports KLSampler3D
+│   │   └── kl_sampler.py      # KLSampler3D
 │   └── representations/       # Lebesgue coefficient architecture Phases 1-2
 │       ├── __init__.py        # Re-exports all representation public API
 │       ├── base.py            # CoefficientRepresentation3D (ABC), LebesgueCoefficientBackend (ABC)
@@ -159,9 +163,12 @@ pygeoinf3D/
 │   │   └── test_concrete_function_providers.py ← kernel-providers Phase 2 (Gaussian / Bump / Boxcar)
 │   ├── operators/
 │   │   ├── __init__.py
-│   │   ├── test_box_laplacian.py     ← Phase 3
-│   │   ├── test_inverse_box_laplacian.py  ← InverseLaplacian plan (23 tests)
+│   │   ├── test_box_laplacian.py     ← Phase 3 + spectral interface tests
+│   │   ├── test_inverse_box_laplacian.py  ← InverseLaplacian plan + spectral interface tests
 │   │   └── test_sola.py              ← SOLA Phase 1+2+3+4
+│   ├── sampling/
+│   │   ├── __init__.py
+│   │   └── test_kl_sampler.py        ← spectral-kl plan (23 tests)
 │   └── representations/              # Lebesgue coefficient architecture Phases 1-2
 │       ├── __init__.py
 │       ├── test_lebesgue_representation.py  ← architecture Phase 1
@@ -957,9 +964,28 @@ All three concrete providers:
 
 ---
 
+### `SpectralOperator3D` — `pygeoinf3d.operators.base`
+
+Abstract base class for operators that are spectrally implemented (i.e. diagonalised in an
+eigenfunction basis). Extends `pygeoinf.LinearOperator`. Any operator that applies a
+spectral projection should inherit from this class so that generic utilities
+(`KLSampler3D`, future spectral solvers) can consume its eigenpairs.
+
+**Required abstract interface:**
+| Symbol | Description |
+|---|---|
+| `get_eigenvalue(index: int) → float` | Operator eigenvalue for mode *k* |
+| `get_eigenfunction(index: int) → Function3D` | L²-normalised eigenfunction Φ_k |
+| `n_modes: int` (property) | Truncation dimension *N* |
+
+Note: the *operator* eigenvalue need not be the Laplacian eigenvalue — for
+`InverseBoxLaplacian` it is the (modified) inverted eigenvalue 1/λ_k.
+
+---
+
 ### `BoxLaplacian` — `pygeoinf3d.operators.laplacian_box`
 
-Spectral negative Laplacian − ∇² on a box domain. Inherits from `pygeoinf.LinearOperator`.
+Spectral negative Laplacian − ∇² on a box domain. Inherits from `SpectralOperator3D`.
 
 **Future design note:**
 See `docs/agent-docs/references/operator-specific-integration-future-note.md`
@@ -977,6 +1003,10 @@ BoxLaplacian(space: Lebesgue3D,
 Validates `space.function_domain is provider._box`. Constructed as self-adjoint via
 `LinearOperator.__init__(space, space, self._apply, adjoint_mapping=self._apply)`.
 
+**`SpectralOperator3D` interface:** `get_eigenvalue(i)` and `get_eigenfunction(i)`
+forward to `self._modes[i][0/1]` (cached at construction from provider). `n_modes`
+returns `len(self._modes)` = `provider.dim`.
+
 **`_apply(f) → Function3D`:**
 1. Evaluate `f` at pre-computed quadrature mesh once.
 2. For each mode k: `c_k = ⟨f, φ_k⟩ ≈ Σ f(x_i) φ_k(x_i) w_i`.
@@ -989,7 +1019,7 @@ pre-fetched and stored as a list for reuse across calls.
 
 ### `InverseBoxLaplacian` — `pygeoinf3d.operators.inverse_laplacian_box`
 
-Spectral pseudo-inverse of the negative Laplacian on a box domain. Inherits from `pygeoinf.LinearOperator`. Self-adjoint.
+Spectral pseudo-inverse of the negative Laplacian on a box domain. Inherits from `SpectralOperator3D`. Self-adjoint.
 
 ```python
 InverseBoxLaplacian(space: Lebesgue3D,
@@ -1009,7 +1039,51 @@ InverseBoxLaplacian(space: Lebesgue3D,
 
 **`_apply(f) → Function3D`:** Identical pattern to `BoxLaplacian._apply` but scales by the pre-computed inverted eigenvalues stored in `self._modes` as `(inv_lam_k, phi_k)` tuples.
 
+**`SpectralOperator3D` interface:** `get_eigenvalue(i)` returns `self._modes[i][0]` (the inverted/modified eigenvalue). `get_eigenfunction(i)` returns `self._modes[i][1]`. `n_modes` returns `len(self._modes)`.
+
 **Usage in Bayesian priors:** Acts as a covariance operator — apply to white noise samples to produce samples from a Laplacian-based Gaussian prior. For mean-zero priors with Neumann BCs, use `null_space_handling='pseudoinverse'`.
+
+---
+
+## Sampling
+
+### `KLSampler3D` — `pygeoinf3d.sampling.kl_sampler`
+
+Karhunen-Loève sampler for Gaussian measures on `Lebesgue3D`. Accepts any
+`SpectralOperator3D` as the covariance operator and truncates the KL expansion
+at `n_modes` modes.
+
+```python
+KLSampler3D(operator: SpectralOperator3D,
+            *,
+            n_modes: int,
+            mean: Function3D | None = None,
+            rng: np.random.Generator | None = None)
+```
+
+- `operator`: must be a `SpectralOperator3D`; typically an `InverseBoxLaplacian`.
+- `n_modes`: required; must satisfy `1 ≤ n_modes ≤ operator.n_modes`.
+- `mean`: mean function (defaults to `operator.domain.zero`).
+- Eigenpairs are **cached at construction** (no lazy loading).
+- `sqrt(max(lam_k, 0))` handles suppressed zero-modes (Neumann pseudoinverse) automatically.
+
+| Member | Description |
+|---|---|
+| `n_modes: int` | Number of KL modes retained |
+| `space: Lebesgue3D` | The function space |
+| `eigenvalues: np.ndarray` | Shape `(n_modes,)` copy of operator eigenvalues |
+| `sample() → Function3D` | Draw one sample: `m + Σ sqrt(λ_k) ξ_k Φ_k` |
+| `samples(n) → list[Function3D]` | Draw *n* independent samples |
+| `covariance_factor` (property) | `LinearOperator: EuclideanSpace(K) → Lebesgue3D` with `L(w) = Σ sqrt(λ_k) w_k Φ_k` |
+
+**Adjoint of `covariance_factor`:** `L*(f) = [sqrt(λ_k) ⟨f, Φ_k⟩]_k`, computed via `space.inner_product`.
+
+**Wiring into GaussianMeasure (PLI workflow):**
+```python
+from pygeoinf import GaussianMeasure
+kl = KLSampler3D(inv_lap, n_modes=20)
+prior = GaussianMeasure(covariance=inv_lap, expectation=space.zero, sample=kl.sample)
+```
 
 ---
 
@@ -1228,10 +1302,12 @@ conda run -n inferences3 python -m pytest tests/ -q
 - `tests/providers/test_tensor_product.py` — 28 tests  ← Phase 3
 - `tests/providers/test_function_providers.py` — 12 tests  ← kernel-providers Phase 1
 - `tests/providers/test_concrete_function_providers.py` — 70 tests  ← kernel-providers Phase 2
-- `tests/operators/test_box_laplacian.py` — 12 tests  ← Phase 3
+- `tests/operators/test_box_laplacian.py` — 17 tests  ← Phase 3 + spectral interface
 - `tests/representations/test_lebesgue_representation.py` — 22 tests  ← architecture Phase 1
 - `tests/representations/test_projection_backends.py` — 40 tests  ← architecture Phase 2
 - `tests/operators/test_sola.py` — 29 tests  ← SOLA Phases 1+2+3+4
+- `tests/operators/test_inverse_box_laplacian.py` — 32 tests  ← InverseLaplacian plan + spectral interface
+- `tests/sampling/test_kl_sampler.py` — 23 tests  ← spectral-kl plan
 - `tests/test_plot.py` — 12 tests  ← plot Phase 3 + interactive slider
 
 ---

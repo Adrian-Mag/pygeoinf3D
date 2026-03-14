@@ -72,11 +72,12 @@ import numpy as np
 from pygeoinf.linear_operators import LinearOperator
 
 from pygeoinf3d.core.functions import Function3D
+from pygeoinf3d.operators.base import SpectralOperator3D
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
 from pygeoinf3d.providers.tensor_product import TensorProductProvider
 
 
-class BoxLaplacian(LinearOperator):
+class BoxLaplacian(SpectralOperator3D):
     """Spectral negative Laplacian on a box domain.
 
     Applies the truncated spectral projection
@@ -153,6 +154,23 @@ class BoxLaplacian(LinearOperator):
             self._apply,
             adjoint_mapping=self._apply,
         )
+
+    # ------------------------------------------------------------------
+    # SpectralOperator3D interface
+    # ------------------------------------------------------------------
+
+    def get_eigenvalue(self, index: int) -> float:
+        """Return the Laplacian eigenvalue $\\lambda_k$ for mode *index*."""
+        return self._modes[index][0]
+
+    def get_eigenfunction(self, index: int) -> Function3D:
+        """Return the $L^2$-normalised eigenfunction $\\Phi_k$ for mode *index*."""
+        return self._modes[index][1]
+
+    @property
+    def n_modes(self) -> int:
+        """Number of modes in the truncated spectral expansion."""
+        return len(self._modes)
 
     # ------------------------------------------------------------------
     # Internal application

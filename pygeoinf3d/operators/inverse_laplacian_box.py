@@ -67,11 +67,12 @@ import numpy as np
 from pygeoinf.linear_operators import LinearOperator
 
 from pygeoinf3d.core.functions import Function3D
+from pygeoinf3d.operators.base import SpectralOperator3D
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
 from pygeoinf3d.providers.tensor_product import TensorProductProvider
 
 
-class InverseBoxLaplacian(LinearOperator):
+class InverseBoxLaplacian(SpectralOperator3D):
     """Spectral pseudo-inverse of the negative Laplacian on a box domain.
 
     Applies the truncated spectral projection
@@ -214,8 +215,27 @@ class InverseBoxLaplacian(LinearOperator):
         )
 
     # ------------------------------------------------------------------
-    # Properties
+    # SpectralOperator3D interface
     # ------------------------------------------------------------------
+
+    def get_eigenvalue(self, index: int) -> float:
+        """Return the (inverted/modified) operator eigenvalue for mode *index*.
+
+        This is the value $\\tilde{\\lambda}_k^{-1}$ actually used by the
+        operator: ``1/lambda_k`` in pseudoinverse/strict modes (or ``0`` for
+        suppressed null-space modes), and ``1/(lambda_k + shift)`` in shift
+        mode.
+        """
+        return self._modes[index][0]
+
+    def get_eigenfunction(self, index: int) -> Function3D:
+        """Return the $L^2$-normalised eigenfunction $\\Phi_k$ for mode *index*."""
+        return self._modes[index][1]
+
+    @property
+    def n_modes(self) -> int:
+        """Number of modes in the truncated spectral expansion."""
+        return len(self._modes)
 
     @property
     def null_space_handling(self) -> str:

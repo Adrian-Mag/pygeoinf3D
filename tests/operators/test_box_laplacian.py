@@ -20,6 +20,7 @@ from pygeoinf3d.geometries.box.domain import BoxDomain
 from pygeoinf3d.providers.tensor_product import TensorProductProvider
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
 from pygeoinf3d.operators.laplacian_box import BoxLaplacian
+from pygeoinf3d.operators.base import SpectralOperator3D
 from pygeoinf3d.core.functions import Function3D
 
 
@@ -217,3 +218,32 @@ class TestSelfAdjointness:
         lf_g = self._ip(unit_box, lap(f), g)
         f_lg = self._ip(unit_box, f, lap(g))
         npt.assert_almost_equal(lf_g, f_lg, decimal=3)
+
+
+# ---------------------------------------------------------------------------
+# SpectralOperator3D interface
+# ---------------------------------------------------------------------------
+
+class TestBoxLaplacianSpectralInterface:
+    """BoxLaplacian satisfies the SpectralOperator3D protocol."""
+
+    def test_is_spectral_operator(self, laplacian_dirichlet):
+        assert isinstance(laplacian_dirichlet, SpectralOperator3D)
+
+    def test_n_modes_equals_provider_dim(self, laplacian_dirichlet, dirichlet_provider):
+        assert laplacian_dirichlet.n_modes == dirichlet_provider.dim
+
+    def test_get_eigenvalue_matches_provider(self, laplacian_dirichlet, dirichlet_provider):
+        for i in range(4):
+            assert laplacian_dirichlet.get_eigenvalue(i) == dirichlet_provider.get_eigenvalue(i)
+
+    def test_get_eigenfunction_matches_provider(self, unit_box, laplacian_dirichlet, dirichlet_provider):
+        rng = np.random.default_rng(42)
+        pts = rng.uniform(0, 1, size=(50, 3))
+        for i in range(3):
+            phi_op = laplacian_dirichlet.get_eigenfunction(i)
+            phi_prov = dirichlet_provider.get_eigenfunction(i)
+            npt.assert_allclose(phi_op(pts), phi_prov(pts), rtol=1e-12)
+
+    def test_neumann_is_spectral_operator(self, laplacian_neumann):
+        assert isinstance(laplacian_neumann, SpectralOperator3D)

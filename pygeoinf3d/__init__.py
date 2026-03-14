@@ -22,11 +22,15 @@ from .providers.base import (
     KernelProvider3D,
 )
 from .providers.tensor_product import TensorProductProvider
+from .operators.base import SpectralOperator3D
 from .operators.laplacian_box import BoxLaplacian
 from .operators.inverse_laplacian_box import InverseBoxLaplacian
 
 # SOLA operator — Phases 1-4: volume-kernel operator core, API locked
 from .operators.sola import SOLAOperator3D
+
+# Sampling — KL expansion sampler for Gaussian measures
+from .sampling import KLSampler3D
 
 # Lebesgue coefficient architecture Phase 1 — representation boundary
 # Lebesgue coefficient architecture Phase 2 — Gram-aware backends
@@ -56,10 +60,13 @@ __all__ = [
     "KernelProvider3D",
     "FunctionToKernelAdapter",
     "TensorProductProvider",
+    "SpectralOperator3D",
     "BoxLaplacian",
     "InverseBoxLaplacian",
     # SOLA operator — Phases 1-4
     "SOLAOperator3D",
+    # Sampling
+    "KLSampler3D",
     # Phase 4 — Representation boundary
     "CoefficientRepresentation3D",
     "LebesgueRepresentation3D",
