@@ -21,9 +21,13 @@ meshzoo = { version = ">=0.11.0", optional = true }
 pyshtools = { version = ">=4.0.0", optional = true }
 Cartopy = { version = "^0.23.0", optional = true }
 
+# Optional interactive plotting extras
+plotly = { version = ">=5.0.0", optional = true }
+
 [tool.poetry.extras]
 geometry = ["trimesh", "meshzoo"]
 spherical = ["pyshtools", "Cartopy"]
+interactive = ["plotly"]
 
 # Heavy FEM/mesh ecosystems (FEniCS, ngsolve, dolfinx) are explicitly deferred
 # to v2+. Do not add them here without a full architectural review.

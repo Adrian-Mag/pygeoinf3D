@@ -1,7 +1,7 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Phase 4 documentation complete — canonical workflow documented, volumetric-only boundary stated in user-facing terms, test counts updated to 424, README refreshed.
-> **Last updated:** 2026-03-13
+> **Status:** InverseBoxLaplacian operator added (spectral pseudo-inverse of `-Δ` with `null_space_handling` options: pseudoinverse / shift / strict). 23 new tests; full suite at 463 passed.
+> **Last updated:** 2026-03-14
 
 ---
 
@@ -50,6 +50,15 @@ meas = op(f)   # shape (2,) — one volume integral per kernel
 plot_function3d_axis_slice(kprov.get_kernel(0).kernel, axis='z', coord=0.0)
 ```
 
+**Runnable demo notebook:**
+- `demos/least_norm_inversion_demo.ipynb` shows the same workflow embedded in
+    pygeoinf's `LinearForwardProblem` + `LinearMinimumNormInversion` interface,
+    using a few dozen Gaussian volumetric kernels, visualizing both the
+    recovered model and a representative kernel slice, and now including an
+    optional Plotly slider for interactive axis-aligned slicing.  Phase 5 adds a
+    synced three-panel comparison of the true model, least-norm solution, and
+    absolute total kernel sensitivity via `compare_function3d_axis_sliders`.
+
 **Volumetric-only boundary (current limitation):**
 All `VolumeKernel3D` instances compute integrals over 3D volumes using
 `Domain3D.integrate_volume`. The following kernel types are **not yet
@@ -87,9 +96,11 @@ implementation changes across `KernelProvider3D`, `SOLAOperator3D`, and
 pygeoinf3D/
 ├── pyproject.toml
 ├── README.md
+├── demos/
+│   └── least_norm_inversion_demo.ipynb   # Noiseless minimum-norm inversion with SOLAOperator3D
 ├── pygeoinf3d/
 │   ├── __init__.py          # Re-exports all public API
-│   ├── plot.py              # Visualization (evaluate_function3d_on_axis_slice, plot_function3d_axis_slice) ← Phase 3
+│   ├── plot.py              # Visualization (static slices + optional Plotly slider) ← Phase 3 + interactive demo
 │   ├── core/
 │   │   ├── __init__.py
 │   │   ├── config.py        # AxisAlignedBoundingBox, CoordinateSystem
@@ -118,6 +129,7 @@ pygeoinf3D/
 │   ├── operators/
 │   │   ├── __init__.py
 │   │   ├── laplacian_box.py   # BoxLaplacian  ← Phase 3
+│   │   ├── inverse_laplacian_box.py  # InverseBoxLaplacian  ← InverseLaplacian plan
 │   │   └── sola.py            # SOLAOperator3D  ← SOLA Phase 1+2+3
 │   └── representations/       # Lebesgue coefficient architecture Phases 1-2
 │       ├── __init__.py        # Re-exports all representation public API
@@ -148,6 +160,7 @@ pygeoinf3D/
 │   ├── operators/
 │   │   ├── __init__.py
 │   │   ├── test_box_laplacian.py     ← Phase 3
+│   │   ├── test_inverse_box_laplacian.py  ← InverseLaplacian plan (23 tests)
 │   │   └── test_sola.py              ← SOLA Phase 1+2+3+4
 │   └── representations/              # Lebesgue coefficient architecture Phases 1-2
 │       ├── __init__.py
@@ -430,8 +443,9 @@ parent's `_components` array, which is a fake `np.zeros(0)` placeholder in
 
 ## Plotting Module — `pygeoinf3d.plot`
 
-Slice-based visualization utilities for `Function3D` objects.  Minimal API:
-two public functions plus three private helpers.  No Plotly dependency.
+Slice-based visualization utilities for `Function3D` objects.  Core Matplotlib
+slice plots are always available; optional Plotly support adds an interactive
+axis slider for notebook exploration.
 
 ### Public API
 
@@ -439,6 +453,8 @@ two public functions plus three private helpers.  No Plotly dependency.
 from pygeoinf3d.plot import (
     evaluate_function3d_on_axis_slice,
     plot_function3d_axis_slice,
+    plot_function3d_axis_slider,
+    compare_function3d_axis_sliders,
 )
 ```
 
@@ -490,6 +506,85 @@ Plots a `pcolormesh` heatmap of the slice.  Returns `(fig, ax, payload)` where
 
 If `ax` is provided, `fig` is obtained via `cast(Figure, ax.figure)`.
 
+#### `plot_function3d_axis_slider`
+
+```python
+plot_function3d_axis_slider(
+    function: Function3D,
+    axis: int | str = 'z',
+    *,
+    n_slices: int = 40,
+    resolution: int | tuple[int, int] = 100,
+    show_plot: bool = True,
+    title: str | None = None,
+    colorscale: str = 'Viridis',
+    vmin: float | None = None,
+    vmax: float | None = None,
+) -> plotly.graph_objects.Figure
+```
+
+Creates a Plotly heatmap figure with slider-controlled frames spanning the
+domain bounds along the chosen slice axis. The slider coordinate traverses
+the box in `x`, `y`, or `z`, and the displayed heatmap uses the two orthogonal
+axes on the plot plane.
+
+| Arg | Description |
+|-----|-------------|
+| `axis` | `'x'`/`'y'`/`'z'` or `0`/`1`/`2` |
+| `n_slices` | positive integer number of slider positions |
+| `resolution` | positive `int` or positive 2-tuple for each 2D slice |
+| `colorscale` | Plotly colorscale name |
+| `vmin`, `vmax` | Optional fixed colour limits shared across all frames |
+
+Raises `ImportError` if Plotly is not installed. Install the optional extra:
+
+```bash
+pip install pygeoinf3d[interactive]
+```
+
+#### `compare_function3d_axis_sliders`
+
+```python
+compare_function3d_axis_sliders(
+    functions: list[Function3D],
+    axis: int | str = 'z',
+    *,
+    n_slices: int = 40,
+    resolution: int | tuple[int, int] = 100,
+    show_plot: bool = True,
+    titles: list[str] | None = None,
+    colorscale: str = 'Viridis',
+    vmin: float | None = None,
+    vmax: float | None = None,
+) -> plotly.graph_objects.Figure
+```
+
+Creates a Plotly figure with one subplot (heatmap) per function, all synced
+to a single slider that moves the slice plane along the chosen axis.  Colour
+limits are derived globally from all panels and all slice positions so that
+panels are directly comparable.
+
+| Arg | Description |
+|-----|-------------|
+| `functions` | Non-empty list of `Function3D` (all with compatible bounding boxes) |
+| `axis` | `'x'`/`'y'`/`'z'` or `0`/`1`/`2` |
+| `n_slices` | positive integer number of slider positions |
+| `resolution` | positive `int` or positive 2-tuple for each 2D slice |
+| `titles` | Per-panel titles; defaults to `function.name` or `'Function i'` |
+| `colorscale` | Plotly colorscale name, shared across all panels |
+| `vmin`, `vmax` | Optional fixed colour limits; inferred globally if omitted |
+
+**Frame structure:** Each `go.Frame` carries `n_panels` `Heatmap` objects
+and sets `traces=[0, 1, …, n_panels-1]`, so advancing the slider updates
+all subplots simultaneously.
+
+**Validation errors:**
+- Empty `functions` → `ValueError`
+- `titles` length ≠ `len(functions)` → `ValueError`
+- Incompatible bounding boxes (not close to each other) → `ValueError`
+- `n_slices ≤ 0` or malformed `resolution` → `ValueError`
+- Plotly not installed → `ImportError`
+
 ### Private Helpers
 
 | Helper | Description |
@@ -497,6 +592,9 @@ If `ax` is provided, `fig` is obtained via `cast(Figure, ax.figure)`.
 | `_parse_axis(axis)` | Normalises `int`/`str` axis to `0`/`1`/`2` |
 | `_get_other_axes(axis_idx)` | Returns `(u_idx, v_idx)` for the two free axes |
 | `_validate_resolution(res)` | Validates and returns `(nu, nv)`; raises `ValueError` for non-positive or malformed input |
+| `_validate_n_slices(n)` | Validates interactive slider length |
+| `_import_plotly_graph_objects()` | Lazy optional Plotly import with install hint |
+| `_import_plotly_make_subplots()` | Lazy import of `plotly.subplots.make_subplots` with same install hint |
 
 ### Type Notes
 
@@ -504,6 +602,8 @@ If `ax` is provided, `fig` is obtained via `cast(Figure, ax.figure)`.
 - `Figure` imported from `matplotlib.figure`, not `plt.Figure` (not exported).
 - `cast(Figure, ax.figure)` used when reusing existing axes (`ax.figure` returns
   `Figure | SubFigure`; cast narrows for the return type).
+- Plotly is imported lazily inside `plot_function3d_axis_slider`, so the core
+    plotting module remains usable without the `interactive` extra.
 
 ### Tests — `tests/test_plot.py`
 
@@ -515,6 +615,20 @@ If `ax` is provided, `fig` is obtained via `cast(Figure, ax.figure)`.
 | `test_invalid_input` | Bad axis and out-of-bounds coord raise `ValueError` |
 | `test_resolution_validation` | resolution=0, -5, (5,5,5), (0,5) all raise `ValueError` |
 | `test_default_coord` | Omitting coord defaults to bbox midpoint |
+| `test_plot_axis_slider_smoke` | Plotly slider figure has frames, labels, and a heatmap trace |
+| `test_plot_axis_slider_x_axis_labels` | x-axis slider uses y/z plot axes and correct slider prefix |
+| `test_plot_axis_slider_y_axis_labels` | y-axis slider uses x/z plot axes and correct slider prefix |
+| `test_plot_axis_slider_numpy_integer_axis` | `np.integer` axis inputs are accepted |
+| `test_plot_axis_slider_validation` | `n_slices <= 0` raises `ValueError` |
+| `test_plot_axis_slider_requires_plotly` | Missing Plotly raises the optional-dependency `ImportError` |
+| `test_compare_function3d_axis_sliders_smoke` | 2-panel figure has 2 data traces, 4 frames, each frame has 2 data entries |
+| `test_compare_function3d_axis_sliders_titles` | Custom titles appear in `fig.layout.annotations` |
+| `test_compare_function3d_axis_sliders_single_panel` | Single function works; 1 trace, correct slider prefix |
+| `test_compare_function3d_axis_sliders_axis_labels` | z-axis slider → x/y plot axis labels |
+| `test_compare_function3d_axis_sliders_validation_empty` | Empty functions list raises `ValueError` |
+| `test_compare_function3d_axis_sliders_validation_titles_length` | Mismatched titles length raises `ValueError` |
+| `test_compare_function3d_axis_sliders_validation_bbox_mismatch` | Incompatible bounding boxes raise `ValueError` |
+| `test_compare_function3d_axis_sliders_requires_plotly` | Monkeypatched missing Plotly raises `ImportError` |
 
 ---
 
@@ -847,6 +961,13 @@ All three concrete providers:
 
 Spectral negative Laplacian − ∇² on a box domain. Inherits from `pygeoinf.LinearOperator`.
 
+**Future design note:**
+See `docs/agent-docs/references/operator-specific-integration-future-note.md`
+for the architectural argument that the current quadrature-based projection is
+an acceptable generic fallback, but dedicated operator-specific numerical
+backends (for example separable transform backends for box domains) should sit
+behind the operator rather than being pushed into `BoxDomain`.
+
 ```python
 BoxLaplacian(space: Lebesgue3D,
              provider: TensorProductProvider,
@@ -863,6 +984,32 @@ Validates `space.function_domain is provider._box`. Constructed as self-adjoint 
 
 Quadrature mesh/weights are pre-computed at construction; all mode callables are
 pre-fetched and stored as a list for reuse across calls.
+
+---
+
+### `InverseBoxLaplacian` — `pygeoinf3d.operators.inverse_laplacian_box`
+
+Spectral pseudo-inverse of the negative Laplacian on a box domain. Inherits from `pygeoinf.LinearOperator`. Self-adjoint.
+
+```python
+InverseBoxLaplacian(space: Lebesgue3D,
+                    provider: TensorProductProvider,
+                    null_space_handling: Literal['pseudoinverse', 'shift', 'strict'] = 'pseudoinverse',
+                    shift: float = 1.0,
+                    eigenvalue_tol: float = 1e-10,
+                    quad_resolution: int = 20)
+```
+
+**`null_space_handling` options:**
+- `'pseudoinverse'` (default): modes with |λ_k| < `eigenvalue_tol` map to 0 (natural pseudoinverse; Neumann constant mode silently projected out).
+- `'shift'`: uses `1/(λ_k + shift)` for all modes; `shift` must be > 0.
+- `'strict'`: raises `ValueError` at construction if any eigenvalue is near-zero (safe for Dirichlet BCs).
+
+**Properties:** `null_space_handling`, `shift`, `eigenvalue_tol`
+
+**`_apply(f) → Function3D`:** Identical pattern to `BoxLaplacian._apply` but scales by the pre-computed inverted eigenvalues stored in `self._modes` as `(inv_lam_k, phi_k)` tuples.
+
+**Usage in Bayesian priors:** Acts as a covariance operator — apply to white noise samples to produce samples from a Laplacian-based Gaussian prior. For mean-zero priors with Neumann BCs, use `null_space_handling='pseudoinverse'`.
 
 ---
 
@@ -1070,7 +1217,7 @@ Run with:
 conda run -n inferences3 python -m pytest tests/ -q
 ```
 
-**424 tests passing** (foundation Phases 1-3 + coefficient architecture Phases 1-2 + SOLA Phases 1-4 + kernel-providers Phases 1-2 + plot Phase 3):
+**430 tests passing** (foundation Phases 1-3 + coefficient architecture Phases 1-2 + SOLA Phases 1-4 + kernel-providers Phases 1-2 + plot Phase 3 + interactive slider extension):
 - `tests/core/test_config.py` — 13 tests
 - `tests/core/test_region.py` — 14 tests
 - `tests/core/test_domain_base.py` — 21 tests
@@ -1085,7 +1232,7 @@ conda run -n inferences3 python -m pytest tests/ -q
 - `tests/representations/test_lebesgue_representation.py` — 22 tests  ← architecture Phase 1
 - `tests/representations/test_projection_backends.py` — 40 tests  ← architecture Phase 2
 - `tests/operators/test_sola.py` — 29 tests  ← SOLA Phases 1+2+3+4
-- `tests/test_plot.py` — 6 tests  ← plot Phase 3
+- `tests/test_plot.py` — 12 tests  ← plot Phase 3 + interactive slider
 
 ---
 

@@ -23,6 +23,7 @@ from .providers.base import (
 )
 from .providers.tensor_product import TensorProductProvider
 from .operators.laplacian_box import BoxLaplacian
+from .operators.inverse_laplacian_box import InverseBoxLaplacian
 
 # SOLA operator — Phases 1-4: volume-kernel operator core, API locked
 from .operators.sola import SOLAOperator3D
@@ -56,6 +57,7 @@ __all__ = [
     "FunctionToKernelAdapter",
     "TensorProductProvider",
     "BoxLaplacian",
+    "InverseBoxLaplacian",
     # SOLA operator — Phases 1-4
     "SOLAOperator3D",
     # Phase 4 — Representation boundary
