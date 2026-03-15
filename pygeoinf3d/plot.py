@@ -99,6 +99,36 @@ def _validate_n_slices(n_slices: int) -> int:
     return n_slices_int
 
 
+def _validate_plot_n_modes(plot_n_modes: Optional[int]) -> Optional[int]:
+    """Validate the optional visualization-only KL mode cap.
+
+    Returns None unchanged. Positive integers are returned as ``int``.
+    Zero, negative values, and non-integer types raise ``ValueError``.
+
+    Args:
+        plot_n_modes: Desired KL mode cap, or None to use all modes.
+
+    Returns:
+        None or the validated positive integer.
+
+    Raises:
+        ValueError: If not None and not a positive integer.
+    """
+    if plot_n_modes is None:
+        return None
+    if not isinstance(plot_n_modes, (int, np.integer)):
+        raise ValueError(
+            f"plot_n_modes must be a positive integer or None, "
+            f"got {plot_n_modes!r}."
+        )
+    n = int(plot_n_modes)
+    if n < 1:
+        raise ValueError(
+            f"plot_n_modes must be a positive integer or None, got {n}."
+        )
+    return n
+
+
 def _validate_volume_resolution(resolution: int) -> int:
     """Validate the regular 3D grid resolution for volume-style plots."""
     if not isinstance(resolution, (int, np.integer)):
@@ -142,6 +172,8 @@ def evaluate_function3d_on_axis_slice(
     axis: Union[int, str],
     coord: Optional[float] = None,
     resolution: Union[int, Tuple[int, int]] = 100,
+    *,
+    plot_n_modes: Optional[int] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Sample a Function3D on a 2D slice aligned with an axis.
 
@@ -155,6 +187,10 @@ def evaluate_function3d_on_axis_slice(
             midpoint of the domain's bounding box.
         resolution: Number of sample points along the two free axes.
             If int, uses (n, n). If tuple of ints, uses (n_u, n_v).
+        plot_n_modes: If the function is a KL sample with tensor-product
+            structure, cap the number of KL modes used to this value.
+            Silently ignored for generic Function3D objects. Defaults to
+            None (use all modes).
 
     Returns:
         (grid_u, grid_v, values) tuple, where:
@@ -164,6 +200,7 @@ def evaluate_function3d_on_axis_slice(
     """
     axis_idx = _parse_axis(axis)
     rn_u, rn_v = _validate_resolution(resolution)
+    plot_n_modes = _validate_plot_n_modes(plot_n_modes)
 
     bbox = function.domain.bounding_box()
     low, high = bbox.low, bbox.high
@@ -177,6 +214,13 @@ def evaluate_function3d_on_axis_slice(
                 f"Slice coordinate {coord} is outside domain bounds "
                 f"[{low[axis_idx]}, {high[axis_idx]}] for axis {axis_idx}."
             )
+
+    # Fast path: KL samples with tensor-product structure bypass the generic
+    # point-by-point evaluation in favour of the vectorized einsum path.
+    # coord is now always a resolved float (never None).
+    fast_path = getattr(function, '_kl_fast_slice_evaluator', None)
+    if fast_path is not None:
+        return fast_path(axis_idx, coord, (rn_u, rn_v), plot_n_modes)
 
     u_idx, v_idx = _get_other_axes(axis_idx)
     u = np.linspace(low[u_idx], high[u_idx], rn_u)
@@ -201,18 +245,31 @@ def evaluate_function3d_on_axis_slice(
 def evaluate_function3d_on_regular_grid(
     function: Function3D,
     resolution: int = 25,
+    *,
+    plot_n_modes: Optional[int] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Sample a Function3D on a regular axis-aligned 3D grid.
 
     Args:
         function: The function to sample.
         resolution: Number of grid points along each axis.
+        plot_n_modes: If the function is a KL sample with tensor-product
+            structure, cap the number of KL modes used to this value.
+            Silently ignored for generic Function3D objects. Defaults to
+            None (use all modes).
 
     Returns:
         ``(X, Y, Z, values)`` where all arrays have shape
         ``(resolution, resolution, resolution)``.
     """
     resolution_int = _validate_volume_resolution(resolution)
+    plot_n_modes = _validate_plot_n_modes(plot_n_modes)
+
+    # Fast path: KL samples with tensor-product structure bypass the generic
+    # point-by-point evaluation in favour of the vectorized einsum path.
+    fast_path = getattr(function, '_kl_fast_grid_evaluator', None)
+    if fast_path is not None:
+        return fast_path(resolution_int, plot_n_modes)
 
     bbox = function.domain.bounding_box()
     low, high = bbox.low, bbox.high
@@ -235,6 +292,7 @@ def plot_function3d_axis_slice(
     show_plot: bool = True,
     title: Optional[str] = None,
     ax: Optional[Axes] = None,
+    plot_n_modes: Optional[int] = None,
     **kwargs: Any,
 ) -> Tuple[Figure, Axes, Dict[str, Any]]:
     """Plot a heatmap of a Function3D on an axis-aligned slice.
@@ -258,7 +316,8 @@ def plot_function3d_axis_slice(
     u_idx, v_idx = _get_other_axes(axis_idx)
 
     grid_u, grid_v, values = evaluate_function3d_on_axis_slice(
-        function, axis=axis_idx, coord=coord, resolution=resolution
+        function, axis=axis_idx, coord=coord, resolution=resolution,
+        plot_n_modes=plot_n_modes,
     )
 
     # Determine the used coord if it was None
@@ -315,6 +374,7 @@ def plot_function3d_axis_slider(
     colorscale: str = 'Viridis',
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
+    plot_n_modes: Optional[int] = None,
 ) -> "go.Figure":
     """Create an interactive Plotly slider for axis-aligned slices.
 
@@ -358,6 +418,7 @@ def plot_function3d_axis_slider(
             axis=axis_idx,
             coord=float(coord),
             resolution=resolution,
+            plot_n_modes=plot_n_modes,
         )
         if u_values is None:
             u_values = grid_u[:, 0]
@@ -459,6 +520,7 @@ def plot_function3d_volume_dropdown(
     title: Optional[str] = None,
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
+    plot_n_modes: Optional[int] = None,
 ) -> "go.Figure":
     """Create a Plotly volume viewer with a dropdown over functions.
 
@@ -523,6 +585,7 @@ def plot_function3d_volume_dropdown(
         Xi, Yi, Zi, values = evaluate_function3d_on_regular_grid(
             fn,
             resolution=resolution_int,
+            plot_n_modes=plot_n_modes,
         )
         if X is None:
             X, Y, Z = Xi, Yi, Zi
@@ -617,6 +680,7 @@ def plot_function3d_isosurface(
     vmax: Optional[float] = None,
     show_plot: bool = True,
     title: Optional[str] = None,
+    plot_n_modes: Optional[int] = None,
 ) -> "go.Figure":
     """Create an interactive 3D isosurface plot of a Function3D.
 
@@ -658,6 +722,7 @@ def plot_function3d_isosurface(
     X, Y, Z, values = evaluate_function3d_on_regular_grid(
         function,
         resolution=resolution_int,
+        plot_n_modes=plot_n_modes,
     )
 
     std = float(values.std())
@@ -718,6 +783,7 @@ def compare_function3d_axis_sliders(
     colorscale: str = 'Viridis',
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
+    plot_n_modes: Optional[int] = None,
 ) -> "go.Figure":
     """Create a synced multi-panel Plotly slider.
 
@@ -797,6 +863,7 @@ def compare_function3d_axis_sliders(
         for fn_idx, fn in enumerate(functions):
             grid_u, grid_v, vals = evaluate_function3d_on_axis_slice(
                 fn, axis=axis_idx, coord=float(coord), resolution=resolution,
+                plot_n_modes=plot_n_modes,
             )
             if u_1d is None:
                 u_1d = grid_u[:, 0]

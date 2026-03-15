@@ -56,6 +56,39 @@ from pygeoinf3d.operators.base import SpectralOperator3D
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
 
 
+def _attach_kl_fast_paths(
+    sampler: "KLSampler3D",
+    xis: np.ndarray,
+    fn: Function3D,
+) -> None:
+    """Tag a KL sample Function3D with fast-path evaluator callables.
+
+    Attaches two private callables to *fn* so that
+    :func:`~pygeoinf3d.plot.evaluate_function3d_on_regular_grid` and
+    :func:`~pygeoinf3d.plot.evaluate_function3d_on_axis_slice` can
+    dispatch to the vectorized tensor-product fast path instead of the
+    point-by-point generic :class:`Function3D` evaluation path.
+
+    Parameters
+    ----------
+    sampler:
+        The :class:`KLSampler3D` that produced *fn*.
+    xis:
+        The standard-normal coefficients used to construct this sample.
+    fn:
+        The :class:`~pygeoinf3d.core.functions.Function3D` to tag.
+    """
+    xis_snap = xis.copy()
+    fn._kl_fast_grid_evaluator = (  # type: ignore[attr-defined]
+        lambda resolution, plot_n_modes=None, _s=sampler, _x=xis_snap:
+            _s.evaluate_on_regular_grid(_x, resolution, plot_n_modes=plot_n_modes)
+    )
+    fn._kl_fast_slice_evaluator = (  # type: ignore[attr-defined]
+        lambda axis, coord, resolution, plot_n_modes=None, _s=sampler, _x=xis_snap:
+            _s.evaluate_on_axis_slice(_x, axis=axis, coord=coord, resolution=resolution, plot_n_modes=plot_n_modes)
+    )
+
+
 def _parse_tp_axis(axis) -> int:
     """Normalise axis argument to int index 0/1/2."""
     if isinstance(axis, (int, np.integer)):
@@ -231,10 +264,13 @@ class KLSampler3D:
                     total = total + w_k * phi_k(x)
             return total
 
-        return Function3D(
+        fn = Function3D(
             self._space.function_domain,
             evaluate_callable=evaluate,
         )
+        if self.has_tensor_product_structure:
+            _attach_kl_fast_paths(self, z, fn)
+        return fn
 
     def samples(self, n: int) -> List[Function3D]:
         """Draw *n* independent samples.
@@ -294,7 +330,10 @@ class KLSampler3D:
                     total = total + w_k * phi_k(x)
             return total
 
-        return Function3D(self._space.function_domain, evaluate_callable=evaluate)
+        fn = Function3D(self._space.function_domain, evaluate_callable=evaluate)
+        if self.has_tensor_product_structure:
+            _attach_kl_fast_paths(self, xis, fn)
+        return fn
 
     # ------------------------------------------------------------------
     # Fast tensor-product evaluators

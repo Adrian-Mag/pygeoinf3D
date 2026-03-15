@@ -1,6 +1,6 @@
 # pygeoinf3D Living Reference
 
-> **Status:** `SpectralOperator3D` ABC added; `BoxLaplacian`/`InverseBoxLaplacian` retrofitted to satisfy it; `KLSampler3D` implemented in new `sampling/` sub-package; Phase 1 KL fast-path evaluators added (`has_tensor_product_structure`, `sample_from_xis`, `evaluate_on_regular_grid`, `evaluate_on_axis_slice`). 24 new tests in this phase; full suite at 526 passed.
+> **Status:** `SpectralOperator3D` ABC added; `BoxLaplacian`/`InverseBoxLaplacian` retrofitted to satisfy it; `KLSampler3D` implemented in new `sampling/` sub-package; Phase 1 KL fast-path evaluators added (`has_tensor_product_structure`, `sample_from_xis`, `evaluate_on_regular_grid`, `evaluate_on_axis_slice`); Phase 2 wires fast-path dispatch into `plot.py` evaluators (`evaluate_function3d_on_regular_grid`, `evaluate_function3d_on_axis_slice`) so KL samples use the vectorized path automatically; Phase 3 exposes `plot_n_modes` as a visualization-only KL mode cap through all public plot helpers — generic `Function3D` objects silently ignore it. 42 new tests across phases 1–3; full suite at 540 passed.
 > **Last updated:** 2026-03-15
 
 ---
@@ -477,6 +477,8 @@ evaluate_function3d_on_axis_slice(
     axis: int | str,
     coord: float | None = None,
     resolution: int | tuple[int, int] = 100,
+    *,
+    plot_n_modes: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]
 ```
 
@@ -485,14 +487,24 @@ Returns `(grid_u, grid_v, values)` all of shape `(nu, nv)`, where `u` and `v`
 are the two axes orthogonal to the slice axis (in the order given by
 `_get_other_axes`).
 
+**Fast path (Phase 2):** If the function object carries a `_kl_fast_slice_evaluator`
+attribute (set by `KLSampler3D` when the operator has tensor-product structure),
+the vectorized einsum path is used instead of generic point-by-point evaluation.
+Generic `Function3D` instances go through the original path unchanged.
+
+**`plot_n_modes` (Phase 3):** When set to a positive integer, the fast path uses
+only the first `plot_n_modes` KL modes instead of all `n_modes`. Silently ignored
+for generic `Function3D` objects.
+
 | Arg | Description |
 |-----|-------------|
 | `axis` | `'x'`/`'y'`/`'z'` or `0`/`1`/`2` |
 | `coord` | slice position; defaults to domain bbox midpoint |
 | `resolution` | positive `int` → `(n,n)`; 2-tuple of positive ints → `(nu,nv)` |
+| `plot_n_modes` | KL mode cap for visualization; `None` = all modes |
 
-Raises `ValueError` for: invalid axis, coord outside domain bounds, or
-malformed resolution (non-positive, wrong tuple length).
+Raises `ValueError` for: invalid axis, coord outside domain bounds,
+malformed resolution, or `plot_n_modes ≤ 0`.
 
 Batch-evaluates via `function(points)` where `points` has shape `(nu*nv, 3)`.
 Coerces result with `np.asarray(...)` before reshape to handle scalar returns.
@@ -503,12 +515,21 @@ Coerces result with `np.asarray(...)` before reshape to handle scalar returns.
 evaluate_function3d_on_regular_grid(
     function: Function3D,
     resolution: int = 25,
+    *,
+    plot_n_modes: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 ```
 
 Samples a `Function3D` on a regular 3D axis-aligned grid covering the full
 bounding box of the domain. Returns `(X, Y, Z, values)`, each with shape
 `(resolution, resolution, resolution)`.
+
+**Fast path (Phase 2):** If the function carries a `_kl_fast_grid_evaluator`
+attribute (set by `KLSampler3D` for tensor-product operators), the vectorized
+einsum path is used instead of generic batch evaluation.
+
+**`plot_n_modes` (Phase 3):** When set, caps the number of KL modes used
+during evaluation. Silently ignored for generic `Function3D` objects.
 
 This is the shared sampling backend for the volumetric Plotly helpers.
 
@@ -523,6 +544,7 @@ plot_function3d_axis_slice(
     show_plot: bool = True,
     title: str | None = None,
     ax: matplotlib.axes.Axes | None = None,
+    plot_n_modes: int | None = None,
     **kwargs,
 ) -> tuple[matplotlib.figure.Figure, matplotlib.axes.Axes, dict[str, Any]]
 ```
@@ -530,7 +552,8 @@ plot_function3d_axis_slice(
 Plots a `pcolormesh` heatmap of the slice.  Returns `(fig, ax, payload)` where
 `payload` contains `{'grid_u', 'grid_v', 'values', 'axis_idx', 'coord'}`.
 
-If `ax` is provided, `fig` is obtained via `cast(Figure, ax.figure)`.
+If `ax` is provided, `fig` is obtained via `cast(Figure, ax.figure)`.  The
+`plot_n_modes` parameter is forwarded to the underlying evaluator.
 
 #### `plot_function3d_axis_slider`
 
@@ -546,6 +569,7 @@ plot_function3d_axis_slider(
     colorscale: str = 'Viridis',
     vmin: float | None = None,
     vmax: float | None = None,
+    plot_n_modes: int | None = None,
 ) -> plotly.graph_objects.Figure
 ```
 
@@ -561,6 +585,7 @@ axes on the plot plane.
 | `resolution` | positive `int` or positive 2-tuple for each 2D slice |
 | `colorscale` | Plotly colorscale name |
 | `vmin`, `vmax` | Optional fixed colour limits shared across all frames |
+| `plot_n_modes` | KL mode cap for all slice evaluations (ignored for generic functions) |
 
 Raises `ImportError` if Plotly is not installed. Install the optional extra:
 
@@ -584,6 +609,7 @@ plot_function3d_volume_dropdown(
     title: str | None = None,
     vmin: float | None = None,
     vmax: float | None = None,
+    plot_n_modes: int | None = None,
 ) -> plotly.graph_objects.Figure
 ```
 
@@ -610,6 +636,7 @@ plot_function3d_isosurface(
     vmax: float | None = None,
     show_plot: bool = True,
     title: str | None = None,
+    plot_n_modes: int | None = None,
 ) -> plotly.graph_objects.Figure
 ```
 
@@ -631,6 +658,7 @@ compare_function3d_axis_sliders(
     colorscale: str = 'Viridis',
     vmin: float | None = None,
     vmax: float | None = None,
+    plot_n_modes: int | None = None,
 ) -> plotly.graph_objects.Figure
 ```
 
@@ -1141,12 +1169,24 @@ KLSampler3D(operator: SpectralOperator3D,
 | `space: Lebesgue3D` | The function space |
 | `eigenvalues: np.ndarray` | Shape `(n_modes,)` copy of operator eigenvalues |
 | `has_tensor_product_structure: bool` | True if operator is backed by `TensorProductProvider`; enables fast evaluators |
-| `sample() → Function3D` | Draw one sample: `m + Σ sqrt(λ_k) ξ_k Φ_k` |
+| `sample() → Function3D` | Draw one sample: `m + Σ sqrt(λ_k) ξ_k Φ_k`. If `has_tensor_product_structure`, attaches `_kl_fast_grid_evaluator` and `_kl_fast_slice_evaluator` to the returned `Function3D`. |
 | `samples(n) → list[Function3D]` | Draw *n* independent samples |
-| `sample_from_xis(xis) → Function3D` | Deterministic sample from given xi array `(n_modes,)`; raises `ValueError` on bad shape |
+| `sample_from_xis(xis) → Function3D` | Deterministic sample from given xi array `(n_modes,)`; raises `ValueError` on bad shape. Also attaches fast-path callables if TP structure is present. |
 | `covariance_factor` (property) | `LinearOperator: EuclideanSpace(K) → Lebesgue3D` with `L(w) = Σ sqrt(λ_k) w_k Φ_k` |
 | `evaluate_on_regular_grid(xis, resolution, *, plot_n_modes)` | **Fast path.** Vectorized `einsum` evaluation on regular 3D grid. Returns `(X, Y, Z, values)` each shape `(Nx, Ny, Nz)`. Requires TP structure; raises `TypeError` otherwise. |
 | `evaluate_on_axis_slice(xis, axis, coord, resolution, *, plot_n_modes)` | **Fast path.** Vectorized `einsum` evaluation on axis-aligned 2D slice. Returns `(grid_u, grid_v, values)` each shape `(Nu, Nv)`. Requires TP structure; raises `TypeError` otherwise. |
+
+**Fast-path auto-dispatch (Phase 2 + 3):** `_attach_kl_fast_paths(sampler, xis, fn)` is a
+module-level helper (private) that stores two lambda callables directly on the
+`Function3D` instance:
+- `fn._kl_fast_grid_evaluator(resolution, plot_n_modes=None)` → `(X, Y, Z, values)`
+- `fn._kl_fast_slice_evaluator(axis, coord, resolution, plot_n_modes=None)` → `(grid_u, grid_v, values)`
+
+These are checked by `evaluate_function3d_on_regular_grid` and
+`evaluate_function3d_on_axis_slice` in `plot.py`, enabling automatic fast-path
+dispatch in all volumetric and slice-based Plotly helpers. **Phase 3** threads
+`plot_n_modes` from the public plot API through to the fast-path callables,
+providing a visualization-only KL mode cap without modifying the underlying sample.
 
 **Adjoint of `covariance_factor`:** `L*(f) = [sqrt(λ_k) ⟨f, Φ_k⟩]_k`, computed via `space.inner_product`.
 

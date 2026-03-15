@@ -537,3 +537,313 @@ def test_compare_function3d_axis_sliders_requires_plotly(
             two_functions,
             show_plot=False,
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: KL fast-path integration tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def kl_sampler(box_domain):
+    """KLSampler3D with tensor-product structure for fast-path testing."""
+    from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+    from pygeoinf3d.providers.tensor_product import TensorProductProvider
+    from pygeoinf3d.operators.inverse_laplacian_box import InverseBoxLaplacian
+    from pygeoinf3d.sampling import KLSampler3D
+
+    space = Lebesgue3D(box_domain)
+    provider = TensorProductProvider(
+        box_domain, truncation=(3, 3, 3), bc_type='dirichlet'
+    )
+    inv_lap = InverseBoxLaplacian(space, provider)
+    return KLSampler3D(inv_lap, n_modes=5, rng=np.random.default_rng(42))
+
+
+def test_kl_sample_has_fast_path_attributes(kl_sampler):
+    """KL samples from a tensor-product operator carry fast-path callables."""
+    sample = kl_sampler.sample()
+    assert hasattr(sample, '_kl_fast_grid_evaluator'), (
+        "KL sample should have _kl_fast_grid_evaluator"
+    )
+    assert hasattr(sample, '_kl_fast_slice_evaluator'), (
+        "KL sample should have _kl_fast_slice_evaluator"
+    )
+    assert callable(sample._kl_fast_grid_evaluator)
+    assert callable(sample._kl_fast_slice_evaluator)
+
+
+def test_generic_function3d_has_no_fast_path(linear_function):
+    """Generic Function3D objects do not carry fast-path callables."""
+    assert not hasattr(linear_function, '_kl_fast_grid_evaluator')
+    assert not hasattr(linear_function, '_kl_fast_slice_evaluator')
+
+
+def test_kl_sample_from_xis_has_fast_path_attributes(kl_sampler):
+    """sample_from_xis() also attaches fast-path callables."""
+    xis = np.ones(kl_sampler.n_modes)
+    sample = kl_sampler.sample_from_xis(xis)
+    assert hasattr(sample, '_kl_fast_grid_evaluator')
+    assert hasattr(sample, '_kl_fast_slice_evaluator')
+
+
+def test_kl_fast_grid_numerically_matches_generic_path(kl_sampler):
+    """Fast-path dispatch produces values numerically equivalent to generic path."""
+    xis = np.random.default_rng(99).standard_normal(kl_sampler.n_modes)
+    sample = kl_sampler.sample_from_xis(xis)
+
+    # Fast path (dispatched automatically because sample has _kl_fast_grid_evaluator)
+    _, _, _, vals_fast = evaluate_function3d_on_regular_grid(sample, resolution=5)
+
+    # Generic path: wrap in a new Function3D without the fast-path attribute
+    fn_generic = Function3D(
+        sample.domain, evaluate_callable=lambda x: sample(x)
+    )
+    _, _, _, vals_gen = evaluate_function3d_on_regular_grid(fn_generic, resolution=5)
+
+    np.testing.assert_allclose(vals_fast, vals_gen, rtol=1e-10, atol=1e-12)
+
+
+def test_kl_fast_slice_numerically_matches_generic_path(kl_sampler):
+    """Fast-path slice dispatch produces values equivalent to generic path."""
+    xis = np.random.default_rng(77).standard_normal(kl_sampler.n_modes)
+    sample = kl_sampler.sample_from_xis(xis)
+
+    gu_fast, gv_fast, vals_fast = evaluate_function3d_on_axis_slice(
+        sample, axis='z', coord=0.5, resolution=6
+    )
+
+    fn_generic = Function3D(
+        sample.domain, evaluate_callable=lambda x: sample(x)
+    )
+    gu_gen, gv_gen, vals_gen = evaluate_function3d_on_axis_slice(
+        fn_generic, axis='z', coord=0.5, resolution=6
+    )
+
+    np.testing.assert_allclose(vals_fast, vals_gen, rtol=1e-10, atol=1e-12)
+
+
+def test_volume_dropdown_uses_kl_fast_path(kl_sampler):
+    """KL samples use the fast-path evaluator in volume/dropdown plots."""
+    pytest.importorskip("plotly.graph_objects")
+    sample = kl_sampler.sample()
+
+    fast_path_calls: list = []
+    original_fast_path = sample._kl_fast_grid_evaluator
+
+    def tracked_fast_path(resolution, plot_n_modes=None):
+        fast_path_calls.append(resolution)
+        return original_fast_path(resolution, plot_n_modes)
+
+    sample._kl_fast_grid_evaluator = tracked_fast_path
+    plot_function3d_volume_dropdown([sample], resolution=5, show_plot=False)
+
+    assert len(fast_path_calls) == 1, (
+        "Fast-path grid evaluator should be called exactly once"
+    )
+    assert fast_path_calls[0] == 5
+
+
+def test_isosurface_uses_kl_fast_path(kl_sampler):
+    """KL samples use the fast-path evaluator in isosurface plots."""
+    pytest.importorskip("plotly.graph_objects")
+    sample = kl_sampler.sample()
+
+    fast_path_calls: list = []
+    original_fast_path = sample._kl_fast_grid_evaluator
+
+    def tracked_fast_path(resolution, plot_n_modes=None):
+        fast_path_calls.append(resolution)
+        return original_fast_path(resolution, plot_n_modes)
+
+    sample._kl_fast_grid_evaluator = tracked_fast_path
+    plot_function3d_isosurface(sample, resolution=5, show_plot=False)
+
+    assert len(fast_path_calls) == 1, (
+        "Fast-path grid evaluator should be called exactly once"
+    )
+    assert fast_path_calls[0] == 5
+
+
+def test_axis_slider_uses_kl_fast_path(kl_sampler):
+    """KL samples use the fast-path evaluator in axis-slider plots."""
+    pytest.importorskip("plotly.graph_objects")
+    sample = kl_sampler.sample()
+
+    fast_path_calls: list = []
+    original_fast_path = sample._kl_fast_slice_evaluator
+
+    def tracked_fast_path(axis, coord, resolution, plot_n_modes=None):
+        fast_path_calls.append((axis, coord))
+        return original_fast_path(axis, coord, resolution, plot_n_modes)
+
+    sample._kl_fast_slice_evaluator = tracked_fast_path
+    plot_function3d_axis_slider(
+        sample, axis='z', n_slices=3, resolution=5, show_plot=False
+    )
+
+    assert len(fast_path_calls) == 3, (
+        "Fast-path slice evaluator should be called once per slice"
+    )
+    # All slices fix axis 2 (z)
+    assert all(ax == 2 for ax, _ in fast_path_calls)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: plot_n_modes visualization knob
+# ---------------------------------------------------------------------------
+
+
+def test_plot_n_modes_validation(kl_sampler, linear_function):
+    """plot_n_modes=0 or negative raises ValueError; None and valid ints are OK.
+
+    Generic Function3D inputs silently ignore a valid plot_n_modes value
+    rather than raising an error.
+    """
+    sample = kl_sampler.sample()
+
+    with pytest.raises(ValueError, match="plot_n_modes"):
+        evaluate_function3d_on_regular_grid(sample, resolution=4, plot_n_modes=0)
+
+    with pytest.raises(ValueError, match="plot_n_modes"):
+        evaluate_function3d_on_axis_slice(
+            sample, axis='z', coord=0.5, resolution=4, plot_n_modes=-1
+        )
+
+    # None is always valid (no error)
+    evaluate_function3d_on_regular_grid(sample, resolution=4, plot_n_modes=None)
+
+    # Generic Function3D — valid plot_n_modes is silently ignored, no error,
+    # and results are identical to omitting the argument
+    _, _, _, vals_default = evaluate_function3d_on_regular_grid(
+        linear_function, resolution=4
+    )
+    _, _, _, vals_with_pnm = evaluate_function3d_on_regular_grid(
+        linear_function, resolution=4, plot_n_modes=2
+    )
+    np.testing.assert_allclose(vals_with_pnm, vals_default)
+
+    _, _, vals_s_default = evaluate_function3d_on_axis_slice(
+        linear_function, axis='z', coord=0.5, resolution=4
+    )
+    _, _, vals_s_pnm = evaluate_function3d_on_axis_slice(
+        linear_function, axis='z', coord=0.5, resolution=4, plot_n_modes=2
+    )
+    np.testing.assert_allclose(vals_s_pnm, vals_s_default)
+
+
+def test_plot_n_modes_changes_kl_sampling_budget_only_for_plotting(kl_sampler):
+    """plot_n_modes truncates the KL sum used during visualization only.
+
+    The underlying KLSampler3D.n_modes is unaffected; the Function3D sample
+    itself still carries all modes for generic (non-fast-path) evaluation.
+    """
+    n_full = kl_sampler.n_modes  # 5 in the fixture
+    xis = np.random.default_rng(321).standard_normal(n_full)
+    sample = kl_sampler.sample_from_xis(xis)
+
+    # Regular grid: plot_n_modes=1 should give different values than full
+    _, _, _, vals_full = evaluate_function3d_on_regular_grid(sample, resolution=5)
+    _, _, _, vals_trunc = evaluate_function3d_on_regular_grid(
+        sample, resolution=5, plot_n_modes=1
+    )
+    assert not np.allclose(vals_full, vals_trunc), (
+        "1-mode truncation should produce different values than full evaluation"
+    )
+
+    # Axis slice: same assertion
+    _, _, vals_s_full = evaluate_function3d_on_axis_slice(
+        sample, axis='z', coord=0.5, resolution=5
+    )
+    _, _, vals_s_trunc = evaluate_function3d_on_axis_slice(
+        sample, axis='z', coord=0.5, resolution=5, plot_n_modes=1
+    )
+    assert not np.allclose(vals_s_full, vals_s_trunc), (
+        "1-mode axis-slice truncation should differ from full evaluation"
+    )
+
+    # The sampler's n_modes is unchanged by visualization calls
+    assert kl_sampler.n_modes == n_full
+
+    # The underlying Function3D still evaluates with all modes generically
+    fn_generic = Function3D(sample.domain, evaluate_callable=lambda x: sample(x))
+    _, _, _, vals_generic = evaluate_function3d_on_regular_grid(fn_generic, resolution=5)
+    np.testing.assert_allclose(vals_full, vals_generic, rtol=1e-10, atol=1e-12)
+
+
+def test_plot_n_modes_full_equals_default(kl_sampler):
+    """Setting plot_n_modes=n_modes gives results identical to the default."""
+    n_full = kl_sampler.n_modes
+    xis = np.random.default_rng(789).standard_normal(n_full)
+    sample = kl_sampler.sample_from_xis(xis)
+
+    _, _, _, vals_default = evaluate_function3d_on_regular_grid(sample, resolution=4)
+    _, _, _, vals_capped = evaluate_function3d_on_regular_grid(
+        sample, resolution=4, plot_n_modes=n_full
+    )
+    np.testing.assert_allclose(vals_capped, vals_default, rtol=1e-12, atol=1e-14)
+
+    _, _, vals_s_default = evaluate_function3d_on_axis_slice(
+        sample, axis='z', coord=0.5, resolution=4
+    )
+    _, _, vals_s_capped = evaluate_function3d_on_axis_slice(
+        sample, axis='z', coord=0.5, resolution=4, plot_n_modes=n_full
+    )
+    np.testing.assert_allclose(vals_s_capped, vals_s_default, rtol=1e-12, atol=1e-14)
+
+
+def test_plot_n_modes_threaded_through_volume_dropdown(kl_sampler):
+    """plot_n_modes flows from plot_function3d_volume_dropdown to the fast path."""
+    pytest.importorskip("plotly.graph_objects")
+    sample = kl_sampler.sample()
+
+    received: list = []
+    original = sample._kl_fast_grid_evaluator
+
+    def tracked(resolution, plot_n_modes=None):
+        received.append(plot_n_modes)
+        return original(resolution, plot_n_modes)
+
+    sample._kl_fast_grid_evaluator = tracked
+    plot_function3d_volume_dropdown([sample], resolution=4, plot_n_modes=2, show_plot=False)
+
+    assert received == [2]
+
+
+def test_plot_n_modes_threaded_through_isosurface(kl_sampler):
+    """plot_n_modes flows from plot_function3d_isosurface to the fast path."""
+    pytest.importorskip("plotly.graph_objects")
+    sample = kl_sampler.sample()
+
+    received: list = []
+    original = sample._kl_fast_grid_evaluator
+
+    def tracked(resolution, plot_n_modes=None):
+        received.append(plot_n_modes)
+        return original(resolution, plot_n_modes)
+
+    sample._kl_fast_grid_evaluator = tracked
+    plot_function3d_isosurface(sample, resolution=4, plot_n_modes=2, show_plot=False)
+
+    assert received == [2]
+
+
+def test_plot_n_modes_threaded_through_axis_slider(kl_sampler):
+    """plot_n_modes flows from plot_function3d_axis_slider to the fast path."""
+    pytest.importorskip("plotly.graph_objects")
+    sample = kl_sampler.sample()
+
+    received: list = []
+    original = sample._kl_fast_slice_evaluator
+
+    def tracked(axis, coord, resolution, plot_n_modes=None):
+        received.append(plot_n_modes)
+        return original(axis, coord, resolution, plot_n_modes)
+
+    sample._kl_fast_slice_evaluator = tracked
+    plot_function3d_axis_slider(
+        sample, axis='z', n_slices=3, resolution=4, plot_n_modes=2, show_plot=False
+    )
+
+    assert len(received) == 3
+    assert all(pnm == 2 for pnm in received)
