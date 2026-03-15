@@ -1,10 +1,10 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, and `GeneralizedBoxLaplacian` (all 5 phases including docs/archive) are **complete and archived**. `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the one remaining active track. A partial demo notebook `demos/generalized_laplacian_covariance_demo.ipynb` for negative-power covariance sampling was started but not yet committed.
+> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, and `GeneralizedBoxLaplacian` (all 5 phases including docs/archive) are **complete and archived**. `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the one remaining active track. A full 6-notebook demo suite (`1_box_domain`, `2_functions`, `3_lebesgue_space`, `3.1_kernel_functionals`, `4_providers`, `6_laplacian`) is now complete and committed.
 >
 > **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5 — backend integration, operator wiring, end-to-end demos).
 >
-> **Last updated:** 2026-03-15
+> **Last updated:** 2026-06-22
 
 ---
 
@@ -112,9 +112,16 @@ pygeoinf3D/
 ├── pyproject.toml
 ├── README.md
 ├── demos/
+│   ├── 1_box_domain_3d_demo.ipynb                # BoxDomain: properties, containment, integration, mesh, sampling
+│   ├── 2_functions_3d_demo.ipynb                 # Function3D: creation, arithmetic, integration, slice visualisation
+│   ├── 3_lebesgue_space_3d_demo.ipynb            # Lebesgue3D: inner product, norm, TensorProductProvider, projection
+│   ├── 3.1_kernel_functionals_3d_demo.ipynb      # VolumeKernel3D, Riesz/to_dual map, SOLA-style kernel grid
+│   ├── 4_providers_3d_demo.ipynb                 # TensorProductProvider, GaussianProvider3D, BumpProvider3D, FunctionToKernelAdapter
+│   ├── 6_laplacian_3d_demo.ipynb                 # BoxLaplacian, InverseBoxLaplacian, GeneralizedBoxLaplacian, KLSampler3D
+│   ├── pli_3d_demo.ipynb                         # End-to-end Bayesian PLI (prior-linked inversion) workflow
 │   ├── least_norm_inversion_demo.ipynb           # Noiseless minimum-norm inversion with SOLAOperator3D
 │   ├── kl_sampler_prior_demo.ipynb               # KL samples from InverseBoxLaplacian prior (spectral-kl plan)
-│   └── generalized_laplacian_covariance_demo.ipynb  # KL samples from (-αΔ)^s covariance, s<0 (partial, uncommitted)
+│   └── generalized_laplacian_covariance_demo.ipynb  # KL samples from (-αΔ)^s covariance, s<0
 ├── pygeoinf3d/
 │   ├── __init__.py          # Re-exports all public API
 │   ├── plot.py              # Visualization (static slices + Plotly sliders + volume/isosurface helpers)
