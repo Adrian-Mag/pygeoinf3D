@@ -64,10 +64,9 @@ from typing import Literal, Union
 
 import numpy as np
 
-from pygeoinf.linear_operators import LinearOperator
-
 from pygeoinf3d.core.functions import Function3D
 from pygeoinf3d.operators.base import SpectralOperator3D
+from pygeoinf3d.operators.generalized_box_laplacian import GeneralizedBoxLaplacian
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
 from pygeoinf3d.providers.tensor_product import TensorProductProvider
 
@@ -176,18 +175,30 @@ class InverseBoxLaplacian(SpectralOperator3D):
         self._eigenvalue_tol = float(eigenvalue_tol)
         self._quad_resolution = quad_resolution
 
-        # --- Build inverted-eigenvalue mode list ---
-        # Each entry: (scaled_inv_eigenvalue, eigenfunction)
-        self._modes: list = []
-        for i in range(provider.dim):
-            lam_k = provider.get_eigenvalue(i)
-            phi_k = provider.get_eigenfunction(i)
+        if null_space_handling == 'pseudoinverse':
+            # Delegate to GeneralizedBoxLaplacian(power=-1) for spectral internals.
+            self._delegate: GeneralizedBoxLaplacian | None = GeneralizedBoxLaplacian(
+                space, provider,
+                power=-1, alpha=1.0,
+                eigenvalue_tol=eigenvalue_tol,
+                quad_resolution=quad_resolution,
+            )
+            self._modes = None
+            self._pts = None
+            self._weights = None
+        else:
+            self._delegate = None
+            # --- Build inverted-eigenvalue mode list for shift/strict ---
+            # Each entry: (scaled_inv_eigenvalue, eigenfunction)
+            self._modes: list = []
+            for i in range(provider.dim):
+                lam_k = provider.get_eigenvalue(i)
+                phi_k = provider.get_eigenfunction(i)
 
-            if null_space_handling == 'shift':
-                inv_lam_k = 1.0 / (lam_k + self._shift)
-            elif abs(lam_k) < eigenvalue_tol:
-                # Near-zero mode handling
-                if null_space_handling == 'strict':
+                if null_space_handling == 'shift':
+                    inv_lam_k = 1.0 / (lam_k + self._shift)
+                elif abs(lam_k) < eigenvalue_tol:
+                    # strict mode: raise on near-zero eigenvalues
                     raise ValueError(
                         f"null_space_handling='strict' but eigenvalue "
                         f"lambda_{i} = {lam_k!r} satisfies "
@@ -195,17 +206,15 @@ class InverseBoxLaplacian(SpectralOperator3D):
                         f"Use 'pseudoinverse' or 'shift' to handle near-zero "
                         f"eigenvalues."
                     )
-                # pseudoinverse: zero out this mode
-                inv_lam_k = 0.0
-            else:
-                inv_lam_k = 1.0 / lam_k
+                else:
+                    inv_lam_k = 1.0 / lam_k
 
-            self._modes.append((inv_lam_k, phi_k))
+                self._modes.append((inv_lam_k, phi_k))
 
-        # --- Pre-compute quadrature mesh and weights ---
-        box = provider._box
-        self._pts = box.structured_mesh(quad_resolution)
-        self._weights = box.volume_weights(quad_resolution)
+            # --- Pre-compute quadrature mesh and weights ---
+            box = provider._box
+            self._pts = box.structured_mesh(quad_resolution)
+            self._weights = box.volume_weights(quad_resolution)
 
         super().__init__(
             space,
@@ -226,15 +235,21 @@ class InverseBoxLaplacian(SpectralOperator3D):
         suppressed null-space modes), and ``1/(lambda_k + shift)`` in shift
         mode.
         """
+        if self._delegate is not None:
+            return self._delegate.get_eigenvalue(index)
         return self._modes[index][0]
 
     def get_eigenfunction(self, index: int) -> Function3D:
         """Return the $L^2$-normalised eigenfunction $\\Phi_k$ for mode *index*."""
+        if self._delegate is not None:
+            return self._delegate.get_eigenfunction(index)
         return self._modes[index][1]
 
     @property
     def n_modes(self) -> int:
         """Number of modes in the truncated spectral expansion."""
+        if self._delegate is not None:
+            return self._delegate.n_modes
         return len(self._modes)
 
     @property
@@ -259,10 +274,9 @@ class InverseBoxLaplacian(SpectralOperator3D):
     def _apply(self, f: Function3D) -> Function3D:
         """Apply the spectral pseudo-inverse Laplacian to *f*.
 
-        Computes projection coefficients $c_k = \\langle f, \\Phi_k \\rangle$
-        using pre-computed quadrature points and weights, then builds the
-        output function as a weighted sum using the pre-computed inverted
-        eigenvalues.
+        For pseudoinverse mode, delegates to the GeneralizedBoxLaplacian engine.
+        For shift/strict modes, computes projection using pre-computed
+        quadrature points and weights with the pre-computed inverted eigenvalues.
 
         Args:
             f: A :class:`~pygeoinf3d.core.functions.Function3D` to apply the
@@ -272,6 +286,9 @@ class InverseBoxLaplacian(SpectralOperator3D):
             :class:`~pygeoinf3d.core.functions.Function3D` approximating
             $((-\\Delta)^{-1}_N f)$.
         """
+        if self._delegate is not None:
+            return self._delegate._apply(f)
+
         # Evaluate f at all quadrature points once
         f_vals = np.asarray(f(self._pts), dtype=float)
 

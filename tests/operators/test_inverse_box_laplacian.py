@@ -441,3 +441,63 @@ class TestInverseBoxLaplacianPseudoinverseConvention:
         )
         for i in range(1, inv_lap.n_modes):
             assert inv_lap.get_eigenvalue(i) > 0, f"Neumann mode {i} not positive"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 wrapper-equivalence tests
+# ---------------------------------------------------------------------------
+
+class TestInverseBoxLaplacianWrapperEquivalence:
+    """Phase 3: pseudoinverse mode must delegate to GeneralizedBoxLaplacian."""
+
+    def test_pseudoinverse_has_delegate(self, space, dirichlet_provider):
+        from pygeoinf3d.operators.generalized_box_laplacian import GeneralizedBoxLaplacian
+        op = InverseBoxLaplacian(space, dirichlet_provider)
+        assert isinstance(op._delegate, GeneralizedBoxLaplacian)
+
+    def test_pseudoinverse_delegate_matches_apply(
+        self, unit_box, space, dirichlet_provider
+    ):
+        from pygeoinf3d.operators.generalized_box_laplacian import GeneralizedBoxLaplacian
+        op = InverseBoxLaplacian(space, dirichlet_provider, quad_resolution=30)
+        gen = GeneralizedBoxLaplacian(
+            space, dirichlet_provider, power=-1, alpha=1.0, quad_resolution=30
+        )
+        phi0 = dirichlet_provider.get_eigenfunction(0)
+        pts = np.random.default_rng(99).uniform(0, 1, size=(50, 3))
+        npt.assert_allclose(op(phi0)(pts), gen(phi0)(pts), rtol=1e-10)
+
+    def test_shift_mode_no_delegate(self, space, dirichlet_provider):
+        op = InverseBoxLaplacian(
+            space, dirichlet_provider,
+            null_space_handling='shift',
+            shift=2.0,
+        )
+        assert op._delegate is None
+
+    def test_strict_mode_no_delegate(self, space, dirichlet_provider):
+        op = InverseBoxLaplacian(
+            space, dirichlet_provider,
+            null_space_handling='strict',
+        )
+        assert op._delegate is None
+
+    def test_shift_mode_still_works_after_refactor(
+        self, unit_box, space, dirichlet_provider
+    ):
+        shift = 3.0
+        op = InverseBoxLaplacian(
+            space, dirichlet_provider,
+            null_space_handling='shift',
+            shift=shift,
+            quad_resolution=30,
+        )
+        phi0 = dirichlet_provider.get_eigenfunction(0)
+        lam0 = dirichlet_provider.get_eigenvalue(0)
+        result = op(phi0)
+        pts = np.random.default_rng(42).uniform(0, 1, size=(50, 3))
+        npt.assert_allclose(
+            result(pts),
+            (1.0 / (lam0 + shift)) * phi0(pts),
+            rtol=1e-3, atol=1e-3,
+        )

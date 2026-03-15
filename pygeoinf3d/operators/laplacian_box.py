@@ -65,19 +65,12 @@ values give more accurate projections at the cost of speed.
 
 from __future__ import annotations
 
-from typing import Union
-
-import numpy as np
-
-from pygeoinf.linear_operators import LinearOperator
-
-from pygeoinf3d.core.functions import Function3D
-from pygeoinf3d.operators.base import SpectralOperator3D
+from pygeoinf3d.operators.generalized_box_laplacian import GeneralizedBoxLaplacian
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
 from pygeoinf3d.providers.tensor_product import TensorProductProvider
 
 
-class BoxLaplacian(SpectralOperator3D):
+class BoxLaplacian(GeneralizedBoxLaplacian):
     """Spectral negative Laplacian on a box domain.
 
     Applies the truncated spectral projection
@@ -127,102 +120,10 @@ class BoxLaplacian(SpectralOperator3D):
         provider: TensorProductProvider,
         quad_resolution: int = 20,
     ) -> None:
-        if space.function_domain is not provider._box:
-            raise ValueError(
-                "The provider's box domain must be the same object as "
-                "space.function_domain."
-            )
-
-        self._space = space
-        self._provider = provider
-        self._quad_resolution = quad_resolution
-
-        # Pre-fetch modes for efficiency (avoids repeated list construction)
-        self._modes: list = [
-            (provider.get_eigenvalue(i), provider.get_eigenfunction(i))
-            for i in range(provider.dim)
-        ]
-
-        # Pre-compute quadrature mesh and weights for projection integrals
-        box = provider._box
-        self._pts = box.structured_mesh(quad_resolution)
-        self._weights = box.volume_weights(quad_resolution)
-
         super().__init__(
-            space,
-            space,
-            self._apply,
-            adjoint_mapping=self._apply,
-        )
-
-    # ------------------------------------------------------------------
-    # SpectralOperator3D interface
-    # ------------------------------------------------------------------
-
-    def get_eigenvalue(self, index: int) -> float:
-        """Return the Laplacian eigenvalue $\\lambda_k$ for mode *index*."""
-        return self._modes[index][0]
-
-    def get_eigenfunction(self, index: int) -> Function3D:
-        """Return the $L^2$-normalised eigenfunction $\\Phi_k$ for mode *index*."""
-        return self._modes[index][1]
-
-    @property
-    def n_modes(self) -> int:
-        """Number of modes in the truncated spectral expansion."""
-        return len(self._modes)
-
-    # ------------------------------------------------------------------
-    # Internal application
-    # ------------------------------------------------------------------
-
-    def _apply(self, f: Function3D) -> Function3D:
-        """Apply the spectral negative Laplacian to *f*.
-
-        Computes projection coefficients $c_k = \\langle f, \\Phi_k \\rangle$
-        using pre-computed quadrature points and weights, then builds the
-        output function as a weighted sum.
-
-        Args:
-            f: A :class:`~pygeoinf3d.core.functions.Function3D` to apply the
-               operator to.
-
-        Returns:
-            :class:`~pygeoinf3d.core.functions.Function3D` approximating
-            $(-\\Delta_N f)$.
-        """
-        # Evaluate f at all quadrature points once
-        f_vals = np.asarray(f(self._pts), dtype=float)
-
-        # Compute spectral coefficients c_k = <f, phi_k> = ∫ f * phi_k dV
-        coeffs = []
-        for lam_k, phi_k in self._modes:
-            phi_vals = np.asarray(phi_k(self._pts), dtype=float)
-            c_k = float(np.dot(f_vals * phi_vals, self._weights))
-            coeffs.append(c_k)
-
-        # Build the output function f_out(x) = sum_k lambda_k * c_k * phi_k(x)
-        # We use a closure that captures the modes list
-        modes_snapshot = list(zip(
-            [lam for lam, _ in self._modes],
-            [phi for _, phi in self._modes],
-            coeffs,
-        ))
-
-        def evaluate(x: np.ndarray) -> Union[float, np.ndarray]:
-            x = np.asarray(x, dtype=float)
-            is_batch = x.ndim == 2
-            if is_batch:
-                total = np.zeros(len(x))
-            else:
-                total = 0.0
-            for lam_k, phi_k, c_k in modes_snapshot:
-                total = total + lam_k * c_k * phi_k(x)
-            return total
-
-        return Function3D(
-            self._space.function_domain,
-            evaluate_callable=evaluate,
+            space, provider,
+            power=1, alpha=1.0,
+            quad_resolution=quad_resolution,
         )
 
     def __repr__(self) -> str:

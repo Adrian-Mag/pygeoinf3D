@@ -288,3 +288,35 @@ class TestBoxLaplacianPositiveOperatorConvention:
         lap = BoxLaplacian(space, neumann_provider)
         for i in range(1, lap.n_modes):
             assert lap.get_eigenvalue(i) > 0, f"Neumann mode {i} eigenvalue not positive"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 wrapper-equivalence tests
+# ---------------------------------------------------------------------------
+
+class TestBoxLaplacianWrapperEquivalence:
+    """BoxLaplacian must be a GeneralizedBoxLaplacian subclass (Phase 3)."""
+
+    def test_box_laplacian_is_generalized_subclass(self, laplacian_dirichlet):
+        from pygeoinf3d.operators.generalized_box_laplacian import GeneralizedBoxLaplacian
+        assert isinstance(laplacian_dirichlet, GeneralizedBoxLaplacian)
+
+    def test_box_laplacian_power_is_1(self, laplacian_dirichlet):
+        assert laplacian_dirichlet.power == 1
+
+    def test_box_laplacian_alpha_is_1(self, laplacian_dirichlet):
+        assert laplacian_dirichlet.alpha == 1.0
+
+    def test_box_laplacian_apply_matches_generalized(self, unit_box, space, dirichlet_provider):
+        from pygeoinf3d.operators.generalized_box_laplacian import GeneralizedBoxLaplacian
+        lap = BoxLaplacian(space, dirichlet_provider, quad_resolution=30)
+        gen = GeneralizedBoxLaplacian(
+            space, dirichlet_provider, power=1, alpha=1.0, quad_resolution=30
+        )
+        phi0 = dirichlet_provider.get_eigenfunction(0)
+        pts = np.random.default_rng(99).uniform(0, 1, size=(50, 3))
+        npt.assert_allclose(lap(phi0)(pts), gen(phi0)(pts), rtol=1e-10)
+
+    def test_box_laplacian_repr_format(self, laplacian_dirichlet):
+        r = repr(laplacian_dirichlet)
+        assert r.startswith("BoxLaplacian(")

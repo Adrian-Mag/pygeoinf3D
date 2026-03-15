@@ -1,8 +1,8 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, and `GeneralizedBoxLaplacian` Phases 1–2 work are **complete and archived**. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is one active track. The focused operator tests and full suite passed during Phase 2 validation on 2026-03-15.
+> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, and `GeneralizedBoxLaplacian` Phases 1–2 work are **complete and archived**. `BoxLaplacian` and `InverseBoxLaplacian` are now thin wrappers over `GeneralizedBoxLaplacian` (Phase 3 complete). The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is one active track.
 >
-> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5 — backend integration, operator wiring, end-to-end demos) and `pygeoinf3d-generalized-box-laplacian-plan.md` (Phases 1–2 complete; Phases 3–5 pending).
+> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5 — backend integration, operator wiring, end-to-end demos) and `pygeoinf3d-generalized-box-laplacian-plan.md` (Phases 1–3 complete; Phases 4–5 pending).
 >
 > **Last updated:** 2026-03-15
 
@@ -13,7 +13,7 @@
 | Plan | Status |
 |------|--------|
 | `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` | **Active** — phases 3–5 in progress |
-| `pygeoinf3d-generalized-box-laplacian-plan.md` | **Active** — Phases 1–2 complete; Phases 3–5 pending |
+| `pygeoinf3d-generalized-box-laplacian-plan.md` | **Active** — Phases 1–3 complete; Phases 4–5 pending |
 
 All other plans (foundation, SOLA, volumetric-kernel-providers, least-norm demo, synced-slice comparison, KL fast-path plot, InverseBoxLaplacian, SpectralOperator3D KL sampler) have been moved to `completed-plans/`.
 
@@ -146,8 +146,8 @@ pygeoinf3D/
 │   │   ├── __init__.py        # Re-exports SpectralOperator3D, SpectralPowerBase3D, BoxLaplacian, InverseBoxLaplacian, GeneralizedBoxLaplacian, SOLAOperator3D
 │   │   ├── base.py            # SpectralOperator3D (ABC)  ← spectral-kl plan
 │   │   ├── spectral_power_base.py  # SpectralPowerBase3D (abstract, ABC mixin)  ← generalized-box-laplacian Phase 2
-│   │   ├── laplacian_box.py   # BoxLaplacian  ← Phase 3 (now inherits SpectralOperator3D)
-│   │   ├── inverse_laplacian_box.py  # InverseBoxLaplacian  ← InverseLaplacian plan (now inherits SpectralOperator3D)
+│   │   ├── laplacian_box.py   # BoxLaplacian  ← thin wrapper over GeneralizedBoxLaplacian (power=1, alpha=1) — Phase 3
+│   │   ├── inverse_laplacian_box.py  # InverseBoxLaplacian  ← pseudoinverse mode delegates to GeneralizedBoxLaplacian(power=-1); shift/strict use own apply — Phase 3
 │   │   ├── generalized_box_laplacian.py  # GeneralizedBoxLaplacian (full impl, inherits SpectralPowerBase3D)  ← generalized-box-laplacian Phases 1–2
 │   │   └── sola.py            # SOLAOperator3D  ← SOLA Phase 1+2+3
 │   ├── sampling/              # KL expansion sampler  ← spectral-kl plan
