@@ -1,4 +1,4 @@
-"""Phase 1 tests for GeneralizedBoxLaplacian integer-power semantics.
+"""Tests for GeneralizedBoxLaplacian integer-power semantics (Phases 1-2).
 
 Covers:
 - Constructor validation (integer power, positive alpha, box identity)
@@ -8,11 +8,8 @@ Covers:
 - Eigenvalue-level equivalence with BoxLaplacian (power=1) and
   InverseBoxLaplacian pseudoinverse (power=-1)
 - SpectralOperator3D interface satisfaction (n_modes, get_eigenfunction, ...)
-- Apply-semantics tests (xfail: Phase 2 _apply implementation pending)
-
-Phase 1 does NOT implement _apply; tests requiring actual function evaluation
-are decorated with @pytest.mark.xfail(strict=False) to document intent
-without blocking the suite.
+- Apply-semantics tests (Phase 2: _apply fully implemented)
+- SpectralPowerBase3D compute_power_eigenvalues helper and abstract interface
 """
 
 from __future__ import annotations
@@ -28,6 +25,7 @@ from pygeoinf3d.operators.laplacian_box import BoxLaplacian
 from pygeoinf3d.operators.inverse_laplacian_box import InverseBoxLaplacian
 from pygeoinf3d.operators.generalized_box_laplacian import GeneralizedBoxLaplacian
 from pygeoinf3d.operators.base import SpectralOperator3D
+from pygeoinf3d.operators.spectral_power_base import SpectralPowerBase3D
 
 
 # ---------------------------------------------------------------------------
@@ -447,22 +445,17 @@ class TestEquivalenceWithExistingOperators:
 
 
 # ---------------------------------------------------------------------------
-# TestApplySemantics — Phase 2 pending (xfail)
+# TestApplySemantics — Phase 2 complete
 # ---------------------------------------------------------------------------
 
 class TestApplySemantics:
-    """Full function-application semantics — Phase 2 _apply implementation pending.
+    """Full function-application semantics for GeneralizedBoxLaplacian._apply.
 
-    These tests document the intended apply-level behavior and serve as the
-    acceptance criteria for Phase 2.  They are marked xfail because
-    GeneralizedBoxLaplacian._apply raises NotImplementedError in Phase 1.
+    These tests verify the apply-level behavior of the fully implemented
+    GeneralizedBoxLaplacian._apply (Phase 2). All tests run as normal
+    non-xfail assertions.
     """
 
-    @pytest.mark.xfail(
-        raises=NotImplementedError,
-        reason="Phase 2 pending: GeneralizedBoxLaplacian._apply not yet implemented",
-        strict=False,
-    )
     def test_power1_apply_matches_boxlaplacian(
         self, unit_box, space, dirichlet_provider
     ):
@@ -476,11 +469,6 @@ class TestApplySemantics:
         pts = rng.uniform(0, 1, size=(50, 3))
         npt.assert_allclose(gen_op(phi0)(pts), box_lap(phi0)(pts), rtol=1e-3)
 
-    @pytest.mark.xfail(
-        raises=NotImplementedError,
-        reason="Phase 2 pending: GeneralizedBoxLaplacian._apply not yet implemented",
-        strict=False,
-    )
     def test_power0_apply_is_identity(
         self, unit_box, space, dirichlet_provider
     ):
@@ -491,11 +479,6 @@ class TestApplySemantics:
         pts = rng.uniform(0, 1, size=(50, 3))
         npt.assert_allclose(gen_op(phi0)(pts), phi0(pts), rtol=1e-3)
 
-    @pytest.mark.xfail(
-        raises=NotImplementedError,
-        reason="Phase 2 pending: GeneralizedBoxLaplacian._apply not yet implemented",
-        strict=False,
-    )
     def test_power_neg1_apply_matches_inverse_boxlaplacian(
         self, unit_box, space, dirichlet_provider
     ):
@@ -509,11 +492,6 @@ class TestApplySemantics:
         pts = rng.uniform(0, 1, size=(50, 3))
         npt.assert_allclose(gen_op(phi0)(pts), inv_lap(phi0)(pts), rtol=1e-3)
 
-    @pytest.mark.xfail(
-        raises=NotImplementedError,
-        reason="Phase 2 pending: GeneralizedBoxLaplacian._apply not yet implemented",
-        strict=False,
-    )
     def test_power_neg1_neumann_zero_mode_maps_to_zero_function(
         self, unit_box, space, neumann_provider
     ):
@@ -525,11 +503,6 @@ class TestApplySemantics:
         pts = rng.uniform(0, 1, size=(50, 3))
         npt.assert_allclose(result(pts), 0.0, atol=1e-6)
 
-    @pytest.mark.xfail(
-        raises=NotImplementedError,
-        reason="Phase 2 pending: GeneralizedBoxLaplacian._apply not yet implemented",
-        strict=False,
-    )
     def test_power2_apply_eigenmode_scaling(
         self, unit_box, space, dirichlet_provider
     ):
@@ -543,3 +516,52 @@ class TestApplySemantics:
         rng = np.random.default_rng(111)
         pts = rng.uniform(0, 1, size=(50, 3))
         npt.assert_allclose(result(pts), (lam0 ** 2) * phi0(pts), rtol=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# TestSpectralPowerBase — compute_power_eigenvalues helper and abstractness
+# ---------------------------------------------------------------------------
+
+class TestSpectralPowerBase:
+    """Tests for SpectralPowerBase3D.compute_power_eigenvalues and abstract interface."""
+
+    def test_compute_power_eigenvalues_positive_power(self):
+        """Helper returns (alpha*lam)^s for positive s."""
+        lams = [1.0, 4.0, 9.0]
+        result = SpectralPowerBase3D.compute_power_eigenvalues(lams, power=2, alpha=1.0)
+        npt.assert_allclose(result, [1.0, 16.0, 81.0], rtol=1e-12)
+
+    def test_compute_power_eigenvalues_zero_power(self):
+        """All modes map to 1.0 for power=0 regardless of eigenvalue."""
+        lams = [0.0, 1.0, 100.0]
+        result = SpectralPowerBase3D.compute_power_eigenvalues(lams, power=0)
+        npt.assert_allclose(result, [1.0, 1.0, 1.0], rtol=1e-12)
+
+    def test_compute_power_eigenvalues_negative_power_suppresses_small_eigs(self):
+        """Near-zero lambda returns 0.0 for negative power (pseudoinverse)."""
+        lams = [0.0, 1e-12, 4.0]
+        result = SpectralPowerBase3D.compute_power_eigenvalues(
+            lams, power=-1, alpha=1.0, eigenvalue_tol=1e-10
+        )
+        assert result[0] == pytest.approx(0.0)
+        assert result[1] == pytest.approx(0.0)
+        npt.assert_allclose(result[2], 1.0 / 4.0, rtol=1e-12)
+
+    def test_compute_power_eigenvalues_negative_power_nonzero_eig(self):
+        """Correct inversion for non-zero eigenvalues with negative power."""
+        lams = [2.0, 5.0]
+        result = SpectralPowerBase3D.compute_power_eigenvalues(
+            lams, power=-2, alpha=2.0
+        )
+        npt.assert_allclose(result[0], 1.0 / (2.0 * 2.0) ** 2, rtol=1e-12)
+        npt.assert_allclose(result[1], 1.0 / (2.0 * 5.0) ** 2, rtol=1e-12)
+
+    def test_spectral_power_base_is_abstract(self, space, dirichlet_provider):
+        """SpectralPowerBase3D cannot be instantiated directly (abstract _apply)."""
+        lams = [1.0, 2.0]
+        phis = [
+            dirichlet_provider.get_eigenfunction(0),
+            dirichlet_provider.get_eigenfunction(1),
+        ]
+        with pytest.raises(TypeError):
+            SpectralPowerBase3D(space, lams, phis)

@@ -1,9 +1,9 @@
 """Integer-power generalisation of the box Laplacian: $(-\\alpha \\Delta)^s$.
 
 Provides :class:`GeneralizedBoxLaplacian`, a
-:class:`~pygeoinf3d.operators.base.SpectralOperator3D` representing the
-spectral operator $(-\\alpha \\Delta)^s$ for integer $s$ (``power``) and
-positive scale $\\alpha$ (``alpha``).
+:class:`~pygeoinf3d.operators.spectral_power_base.SpectralPowerBase3D`
+representing the spectral operator $(-\\alpha \\Delta)^s$ for integer $s$
+(``power``) and positive scale $\\alpha$ (``alpha``).
 
 Mathematical definition
 -----------------------
@@ -41,23 +41,23 @@ Special cases
 
 Implementation status
 ---------------------
-**Phase 1 stub**: eigenvalue and eigenfunction access are fully implemented.
-The :meth:`_apply` spectral projection mapping raises
-:exc:`NotImplementedError` and will be completed in Phase 2 of the
-generalized-box-laplacian plan.
+Full implementation: eigenvalue access, eigenfunction access, and the
+full spectral projection :meth:`_apply` are all implemented.
 """
 
 from __future__ import annotations
 
+from typing import Union
+
 import numpy as np
 
 from pygeoinf3d.core.functions import Function3D
-from pygeoinf3d.operators.base import SpectralOperator3D
+from pygeoinf3d.operators.spectral_power_base import SpectralPowerBase3D
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
 from pygeoinf3d.providers.tensor_product import TensorProductProvider
 
 
-class GeneralizedBoxLaplacian(SpectralOperator3D):
+class GeneralizedBoxLaplacian(SpectralPowerBase3D):
     """Spectral operator $(-\\alpha \\Delta)^s$ on a box domain.
 
     Represents integer powers of the positive box Laplacian.  The operator
@@ -66,8 +66,7 @@ class GeneralizedBoxLaplacian(SpectralOperator3D):
     :class:`~pygeoinf3d.providers.tensor_product.TensorProductProvider`.
 
     For negative powers, modes with ``|lambda_k| < eigenvalue_tol`` are
-    suppressed to zero (pseudoinverse / mean-zero projection). This is the only
-    zero-mode strategy supported in Phase 1; shifted variants are out of scope.
+    suppressed to zero (pseudoinverse / mean-zero projection).
 
     Parameters
     ----------
@@ -86,6 +85,11 @@ class GeneralizedBoxLaplacian(SpectralOperator3D):
     eigenvalue_tol:
         Threshold below which a Laplacian eigenvalue is treated as zero for
         pseudoinverse handling when ``power < 0``. Default ``1e-10``.
+    quad_resolution:
+        Resolution passed to
+        :meth:`~pygeoinf3d.geometries.box.domain.BoxDomain.structured_mesh`
+        when computing the $L^2$ projections.  Higher values give more
+        accurate coefficients.  Default ``20``.
 
     Raises
     ------
@@ -95,12 +99,6 @@ class GeneralizedBoxLaplacian(SpectralOperator3D):
         If ``alpha <= 0``.
     ValueError
         If ``provider``'s box domain differs from ``space.function_domain``.
-
-    Notes
-    -----
-    **Phase 1 stub**: the :meth:`_apply` mapping raises
-    :exc:`NotImplementedError`. Full spectral projection is implemented in
-    Phase 2 of ``pygeoinf3d-generalized-box-laplacian-plan.md``.
 
     Examples
     --------
@@ -116,9 +114,10 @@ class GeneralizedBoxLaplacian(SpectralOperator3D):
         space    = Lebesgue3D(box)
         provider = TensorProductProvider(box, truncation=(4, 4, 4), bc_type='dirichlet')
 
-        # Power=2 Laplacian: eigenvalues = lambda_k^2
+        # Power=2 Laplacian: eigenvalues = lambda_k^2, full apply supported
         op = GeneralizedBoxLaplacian(space, provider, power=2)
-        ev0 = op.get_eigenvalue(0)   # = lambda_0 ** 2
+        phi0 = provider.get_eigenfunction(0)
+        result = op(phi0)   # ≈ lambda_0^2 * phi0 pointwise
 
         # Identity operator
         ident = GeneralizedBoxLaplacian(space, provider, power=0)
@@ -133,6 +132,7 @@ class GeneralizedBoxLaplacian(SpectralOperator3D):
         power: int,
         alpha: float = 1.0,
         eigenvalue_tol: float = 1e-10,
+        quad_resolution: int = 20,
     ) -> None:
         # --- Validate power: must be an integer type ---
         if not isinstance(power, (int, np.integer)):
@@ -161,67 +161,35 @@ class GeneralizedBoxLaplacian(SpectralOperator3D):
         self._power = int(power)
         self._alpha = float(alpha)
         self._eigenvalue_tol = float(eigenvalue_tol)
+        self._quad_resolution = quad_resolution
 
-        # --- Pre-compute operator eigenvalues ---
-        # Convention: mu_k = (alpha * lambda_k)^power
-        # Special cases:
-        #   power == 0  : mu_k = 1.0 (identity, regardless of alpha or lambda_k)
-        #   power < 0, |lambda_k| < tol : mu_k = 0.0 (pseudoinverse suppression)
-        #   otherwise   : mu_k = (alpha * lambda_k) ** power
-        self._operator_eigenvalues: list[float] = []
-        for i in range(provider.dim):
-            lam_k = float(provider.get_eigenvalue(i))
-            if self._power == 0:
-                op_ev = 1.0
-            elif self._power < 0 and abs(lam_k) < self._eigenvalue_tol:
-                op_ev = 0.0
-            else:
-                op_ev = float((self._alpha * lam_k) ** self._power)
-            self._operator_eigenvalues.append(op_ev)
+        # Build operator eigenvalues using the canonical convention
+        laplacian_eigs = [
+            float(provider.get_eigenvalue(i)) for i in range(provider.dim)
+        ]
+        op_eigenvalues = SpectralPowerBase3D.compute_power_eigenvalues(
+            laplacian_eigs,
+            power=self._power,
+            alpha=self._alpha,
+            eigenvalue_tol=self._eigenvalue_tol,
+        )
 
-        # Pre-cache eigenfunctions to avoid repeated provider calls
-        self._eigenfunctions: list[Function3D] = [
+        # Pre-fetch eigenfunctions to avoid repeated provider calls
+        eigenfunctions: list[Function3D] = [
             provider.get_eigenfunction(i) for i in range(provider.dim)
         ]
 
-        super().__init__(
-            space,
-            space,
-            self._apply,
-            adjoint_mapping=self._apply,
-        )
+        # Pre-compute quadrature mesh and weights for projection integrals
+        box = provider._box
+        self._pts = box.structured_mesh(quad_resolution)
+        self._weights = box.volume_weights(quad_resolution)
+
+        super().__init__(space, op_eigenvalues, eigenfunctions)
 
     # ------------------------------------------------------------------
-    # SpectralOperator3D interface
+    # Properties (power / alpha / eigenvalue_tol are GeneralizedBoxLaplacian
+    # specifics; get_eigenvalue/get_eigenfunction/n_modes are inherited)
     # ------------------------------------------------------------------
-
-    def get_eigenvalue(self, index: int) -> float:
-        """Return the operator eigenvalue $(\\alpha \\lambda_k)^s$ for mode *index*.
-
-        Parameters
-        ----------
-        index : int
-            Zero-based mode index in :math:`[0, \\text{n\\_modes})`.
-
-        Returns
-        -------
-        float
-            $(\\alpha \\lambda_k)^s$, or ``1.0`` if ``power == 0``, or ``0.0``
-            for suppressed near-zero modes when ``power < 0``.
-        """
-        return self._operator_eigenvalues[index]
-
-    def get_eigenfunction(self, index: int) -> Function3D:
-        """Return the $L^2$-normalised eigenfunction $\\Phi_k$ for mode *index*.
-
-        Eigenfunctions are forwarded unchanged from the underlying provider.
-        """
-        return self._eigenfunctions[index]
-
-    @property
-    def n_modes(self) -> int:
-        """Number of modes in the truncated spectral expansion."""
-        return len(self._operator_eigenvalues)
 
     @property
     def power(self) -> int:
@@ -239,25 +207,60 @@ class GeneralizedBoxLaplacian(SpectralOperator3D):
         return self._eigenvalue_tol
 
     # ------------------------------------------------------------------
-    # Internal application (Phase 1 stub — raises NotImplementedError)
+    # Spectral projection apply — box quadrature
     # ------------------------------------------------------------------
 
     def _apply(self, f: Function3D) -> Function3D:
-        """Apply the spectral operator to *f*.
+        """Apply the spectral operator $(-\\alpha\\Delta)^s$ to *f*.
 
-        .. note::
-            **Phase 1 stub**: raises :exc:`NotImplementedError`.
-            Full spectral projection will be implemented in Phase 2 of the
-            generalized-box-laplacian plan.
+        Computes $L^2$ projection coefficients
+        $c_k = \\langle f, \\Phi_k \\rangle_{L^2}$ using the pre-computed
+        box quadrature, then synthesises the result as
 
-        Raises
-        ------
-        NotImplementedError
-            Always in Phase 1.
+        .. math::
+
+            (Af)(\\mathbf{x})
+                = \\sum_{k=0}^{N-1} \\mu_k\\, c_k\\, \\Phi_k(\\mathbf{x})
+
+        where $\\mu_k = (\\alpha\\lambda_k)^s$ (or ``0`` for suppressed modes).
+
+        Parameters
+        ----------
+        f : :class:`~pygeoinf3d.core.functions.Function3D`
+            The input function.
+
+        Returns
+        -------
+        :class:`~pygeoinf3d.core.functions.Function3D`
+            The spectral operator applied to *f*.
         """
-        raise NotImplementedError(
-            "GeneralizedBoxLaplacian._apply is not yet implemented. "
-            "See Phase 2 of pygeoinf3d-generalized-box-laplacian-plan.md."
+        # Evaluate f at all quadrature points once
+        f_vals = np.asarray(f(self._pts), dtype=float)
+
+        # Compute spectral coefficients c_k = <f, phi_k> = ∫ f * phi_k dV
+        coeffs = []
+        for phi_k in self._eigenfunctions:
+            phi_vals = np.asarray(phi_k(self._pts), dtype=float)
+            c_k = float(np.dot(f_vals * phi_vals, self._weights))
+            coeffs.append(c_k)
+
+        # Snapshot for closure: (mu_k, phi_k, c_k)
+        modes_snapshot = list(zip(self._op_eigenvalues, self._eigenfunctions, coeffs))
+
+        def evaluate(x: np.ndarray) -> Union[float, np.ndarray]:
+            x = np.asarray(x, dtype=float)
+            is_batch = x.ndim == 2
+            if is_batch:
+                total = np.zeros(len(x))
+            else:
+                total = 0.0
+            for mu_k, phi_k, c_k in modes_snapshot:
+                total = total + mu_k * c_k * phi_k(x)
+            return total
+
+        return Function3D(
+            self._space.function_domain,
+            evaluate_callable=evaluate,
         )
 
     def __repr__(self) -> str:

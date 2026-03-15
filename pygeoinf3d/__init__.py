@@ -23,6 +23,7 @@ from .providers.base import (
 )
 from .providers.tensor_product import TensorProductProvider
 from .operators.base import SpectralOperator3D
+from .operators.spectral_power_base import SpectralPowerBase3D
 from .operators.laplacian_box import BoxLaplacian
 from .operators.inverse_laplacian_box import InverseBoxLaplacian
 from .operators.generalized_box_laplacian import GeneralizedBoxLaplacian
@@ -62,6 +63,7 @@ __all__ = [
     "FunctionToKernelAdapter",
     "TensorProductProvider",
     "SpectralOperator3D",
+    "SpectralPowerBase3D",
     "BoxLaplacian",
     "InverseBoxLaplacian",
     "GeneralizedBoxLaplacian",

@@ -1,8 +1,8 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, and `SpectralOperator3D` work are **complete and archived**. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is one active track. `GeneralizedBoxLaplacian` Phase 1 (semantics stub + tests) is also active. The focused operator tests and full suite passed during Phase 1 validation on 2026-03-15.
+> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, and `GeneralizedBoxLaplacian` Phases 1–2 work are **complete and archived**. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is one active track. The focused operator tests and full suite passed during Phase 2 validation on 2026-03-15.
 >
-> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5 — backend integration, operator wiring, end-to-end demos) and `pygeoinf3d-generalized-box-laplacian-plan.md` (Phase 1 complete; Phases 2–5 pending).
+> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5 — backend integration, operator wiring, end-to-end demos) and `pygeoinf3d-generalized-box-laplacian-plan.md` (Phases 1–2 complete; Phases 3–5 pending).
 >
 > **Last updated:** 2026-03-15
 
@@ -13,7 +13,7 @@
 | Plan | Status |
 |------|--------|
 | `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` | **Active** — phases 3–5 in progress |
-| `pygeoinf3d-generalized-box-laplacian-plan.md` | **Active** — Phase 1 complete (stub + tests); Phases 2–5 pending |
+| `pygeoinf3d-generalized-box-laplacian-plan.md` | **Active** — Phases 1–2 complete; Phases 3–5 pending |
 
 All other plans (foundation, SOLA, volumetric-kernel-providers, least-norm demo, synced-slice comparison, KL fast-path plot, InverseBoxLaplacian, SpectralOperator3D KL sampler) have been moved to `completed-plans/`.
 
@@ -143,11 +143,12 @@ pygeoinf3D/
 │   │       ├── bump.py        # BumpProvider3D       ← kernel-providers Phase 2
 │   │       └── boxcar.py      # BoxcarProvider3D     ← kernel-providers Phase 2
 │   ├── operators/
-│   │   ├── __init__.py        # Re-exports SpectralOperator3D, BoxLaplacian, InverseBoxLaplacian, GeneralizedBoxLaplacian, SOLAOperator3D
+│   │   ├── __init__.py        # Re-exports SpectralOperator3D, SpectralPowerBase3D, BoxLaplacian, InverseBoxLaplacian, GeneralizedBoxLaplacian, SOLAOperator3D
 │   │   ├── base.py            # SpectralOperator3D (ABC)  ← spectral-kl plan
+│   │   ├── spectral_power_base.py  # SpectralPowerBase3D (abstract, ABC mixin)  ← generalized-box-laplacian Phase 2
 │   │   ├── laplacian_box.py   # BoxLaplacian  ← Phase 3 (now inherits SpectralOperator3D)
 │   │   ├── inverse_laplacian_box.py  # InverseBoxLaplacian  ← InverseLaplacian plan (now inherits SpectralOperator3D)
-│   │   ├── generalized_box_laplacian.py  # GeneralizedBoxLaplacian (Phase 1 stub)  ← generalized-box-laplacian plan
+│   │   ├── generalized_box_laplacian.py  # GeneralizedBoxLaplacian (full impl, inherits SpectralPowerBase3D)  ← generalized-box-laplacian Phases 1–2
 │   │   └── sola.py            # SOLAOperator3D  ← SOLA Phase 1+2+3
 │   ├── sampling/              # KL expansion sampler  ← spectral-kl plan
 │   │   ├── __init__.py        # Re-exports KLSampler3D
@@ -1159,13 +1160,56 @@ InverseBoxLaplacian(space: Lebesgue3D,
 
 ---
 
+### `SpectralPowerBase3D` — `pygeoinf3d.operators.spectral_power_base`
+
+Non-box-specific reusable abstract base for spectral operators with pre-computed
+eigenvalue lists. Inherits from `SpectralOperator3D` *and* `ABC` (enforcing
+`@abstractmethod` even though `LinearOperator` does not use `ABCMeta`).
+
+```python
+SpectralPowerBase3D(space: Lebesgue3D,
+                   op_eigenvalues: list[float],
+                   eigenfunctions: list[Function3D])
+```
+
+Stores `self._op_eigenvalues` and `self._eigenfunctions`. Passes `self._apply` as
+both forward and adjoint mapping to `SpectralOperator3D.__init__` (self-adjoint).
+
+**Concrete `SpectralOperator3D` interface** (not abstract, provided by this base):
+| Member | Description |
+|--------|-------------|
+| `get_eigenvalue(index) → float` | `self._op_eigenvalues[index]` |
+| `get_eigenfunction(index) → Function3D` | `self._eigenfunctions[index]` |
+| `n_modes: int` (property) | `len(self._op_eigenvalues)` |
+
+**Abstract `_apply(f) → Function3D`** — subclasses must implement domain-specific
+quadrature. Pattern: compute `c_k = ⟨f,Φ_k⟩` then synthesise `Σ μ_k c_k Φ_k(x)`.
+
+**Static helper:**
+```python
+SpectralPowerBase3D.compute_power_eigenvalues(
+    laplacian_eigs: list[float],
+    power: int,
+    alpha: float = 1.0,
+    eigenvalue_tol: float = 1e-10,
+) -> list[float]
+```
+Canonical convention for $(-\alpha\Delta)^s$:
+$$\mu_k = \begin{cases} 1 & s=0 \\ 0 & s<0,|\lambda_k|<\varepsilon \\ (\alpha\lambda_k)^s & \text{otherwise} \end{cases}$$
+
+**Does not know about:** box geometry, `TensorProductProvider`, or quadrature setup.
+
+**Exported from:** `pygeoinf3d.operators`, `pygeoinf3d`.
+
+---
+
 ### `GeneralizedBoxLaplacian` — `pygeoinf3d.operators.generalized_box_laplacian`
 
-*(Phase 1 stub — eigenvalue semantics only; `_apply` raises `NotImplementedError`.)*
+*(Phase 2 complete — full spectral projection implemented.)*
 
 Integer-power generalisation of the box Laplacian: $(-\alpha\Delta)^s$ for
 integer `power` $s$ and positive `alpha` $\alpha > 0$. Inherits from
-`SpectralOperator3D`. Self-adjoint (once `_apply` is implemented in Phase 2).
+`SpectralPowerBase3D`. Self-adjoint.
 
 ```python
 GeneralizedBoxLaplacian(space: Lebesgue3D,
@@ -1173,12 +1217,16 @@ GeneralizedBoxLaplacian(space: Lebesgue3D,
                         *,
                         power: int,
                         alpha: float = 1.0,
-                        eigenvalue_tol: float = 1e-10)
+                        eigenvalue_tol: float = 1e-10,
+                        quad_resolution: int = 20)
 ```
 
-**Eigenvalue formula:** `mu_k = (alpha * lambda_k) ** power` with two special cases:
-- `power == 0`: `mu_k = 1.0` for **all** modes (identity operator, regardless of `alpha` or `lambda_k`).
-- `power < 0` and `|lambda_k| < eigenvalue_tol`: `mu_k = 0.0` (pseudoinverse suppression of near-zero modes).
+**Eigenvalue formula:** delegates to `SpectralPowerBase3D.compute_power_eigenvalues`:
+- `power == 0`: `mu_k = 1.0` for **all** modes (identity).
+- `power < 0` and `|lambda_k| < eigenvalue_tol`: `mu_k = 0.0` (pseudoinverse suppression).
+- Otherwise: `mu_k = (alpha * lambda_k) ** power`.
+
+**`get_eigenvalue`, `get_eigenfunction`, `n_modes`** are inherited from `SpectralPowerBase3D`.
 
 **Validation:**
 - `power` must be a Python `int` or `np.integer`; `float` raises `TypeError`.
@@ -1187,17 +1235,16 @@ GeneralizedBoxLaplacian(space: Lebesgue3D,
 
 **Properties:** `power: int`, `alpha: float`, `eigenvalue_tol: float`
 
-**Special-case equivalences (eigenvalue level):**
-- `GeneralizedBoxLaplacian(..., power=1, alpha=1.0)` produces the same eigenvalues as `BoxLaplacian(..., alpha=1.0)`.
-- `GeneralizedBoxLaplacian(..., power=-1, alpha=1.0)` produces the same eigenvalues as `InverseBoxLaplacian(..., null_space_handling='pseudoinverse')`.
+**`_apply(f) → Function3D`:** quadrature-based spectral projection (same pattern as `BoxLaplacian`):
+1. Evaluate `f` at pre-computed `box.structured_mesh(quad_resolution)` once.
+2. `c_k = ⟨f, φ_k⟩ ≈ Σ f(x_i) φ_k(x_i) w_i`
+3. Return `Function3D` evaluating `Σ_k μ_k c_k φ_k(x)` via closure.
 
-**Public convention:** Powers are taken of the *positive* operator $(-\alpha\Delta)$,
-not raw $\Delta$. This keeps operator eigenvalues non-negative for all box
-Laplacian BCs and $\alpha > 0$.
-
-**Phase 1 status:** `_apply` not yet implemented (raises `NotImplementedError`).
-Phase 2 will add the full spectral projection and integrate `_provider` for
-fast-path KL compatibility.
+**Special-case equivalences (apply level):**
+- `GeneralizedBoxLaplacian(..., power=1, alpha=1.0)(f)` ≈ `BoxLaplacian(...)(f)` pointwise.
+- `GeneralizedBoxLaplacian(..., power=-1, alpha=1.0)(f)` ≈ `InverseBoxLaplacian(..., null_space_handling='pseudoinverse')(f)` pointwise.
+- `GeneralizedBoxLaplacian(..., power=0)(f)` ≈ `f` pointwise (identity).
+- Neumann zero mode under `power=-1`: contribution is `0 * c_0 * φ_0(x) = 0` (correctly suppressed).
 
 ---
 
