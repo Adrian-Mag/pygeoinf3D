@@ -187,7 +187,8 @@ pygeoinf3D/
 │   │   └── test_sola.py              ← SOLA Phase 1+2+3+4
 │   ├── sampling/
 │   │   ├── __init__.py
-│   │   └── test_kl_sampler.py        ← spectral-kl plan (23 tests)
+│   │   ├── test_kl_sampler.py        ← spectral-kl plan (23 tests)
+│   │   └── test_kl_generalized_integration.py  ← generalized-box-laplacian plan Phase 4 (10 tests)
 │   └── representations/              # Lebesgue coefficient architecture Phases 1-2
 │       ├── __init__.py
 │       ├── test_lebesgue_representation.py  ← architecture Phase 1
@@ -1527,6 +1528,7 @@ conda run -n inferences3 python -m pytest tests/ -q
 - `tests/operators/test_sola.py` — 29 tests  ← SOLA Phases 1+2+3+4
 - `tests/operators/test_inverse_box_laplacian.py` — 32 tests  ← InverseLaplacian plan + spectral interface
 - `tests/sampling/test_kl_sampler.py` — 23 tests  ← spectral-kl plan
+- `tests/sampling/test_kl_generalized_integration.py` — 10 tests  ← generalized-box-laplacian plan Phase 4
 - `tests/test_plot.py` — 17 tests  ← plot Phase 3 + slider + volume/isosurface helpers
 
 ---
