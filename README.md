@@ -28,7 +28,8 @@ Function spaces (`Lebesgue3D`, …) inherit from `pygeoinf.HilbertSpace` and are
 | Functions | `Function3D`, `Lebesgue3D`, `VolumeKernel3D` | Phase 2 |
 | Box geometry | `BoxDomain` | Phase 3, first concrete domain |
 | Spectral basis | `TensorProductProvider` | Dirichlet/Neumann box eigenfunctions |
-| Spectral operator | `BoxLaplacian` | −∇² on BoxDomain |
+| Spectral operators | `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` | Integer powers of (−α∇²)ˢ on BoxDomain |
+| Spectral operator wrappers | `BoxLaplacian`, `InverseBoxLaplacian` | Thin wrappers over `GeneralizedBoxLaplacian` |
 | Function providers | `GaussianProvider3D`, `BumpProvider3D`, `BoxcarProvider3D` | Volumetric kernels |
 | Kernel adapter | `FunctionToKernelAdapter` | FunctionProvider3D → KernelProvider3D |
 | Measurement operator | `SOLAOperator3D` | Forward, dual, and adjoint |
@@ -99,9 +100,45 @@ meas = op(f)   # shape (2,) — one volume integral per kernel
 plot_function3d_axis_slice(kprov.get_kernel(0).kernel, axis='z', coord=0.0)
 ```
 
+## Spectral Operator Family
+
+The generalized spectral operator family represents integer powers of the
+positive box operator $(-\alpha\Delta)^s$:
+
+```python
+from pygeoinf3d import GeneralizedBoxLaplacian, TensorProductProvider, Lebesgue3D
+from pygeoinf3d.geometries.box.domain import BoxDomain
+import numpy as np
+
+box      = BoxDomain(np.zeros(3), np.ones(3))
+space    = Lebesgue3D(box)
+provider = TensorProductProvider(box, truncation=(5, 5, 5), bc_type='dirichlet')
+
+# Inverse Laplacian (covariance-like, for KL sampling)
+inv_lap = GeneralizedBoxLaplacian(space, provider, power=-1)
+
+# Square Laplacian (higher-order smoothing)
+sq_lap  = GeneralizedBoxLaplacian(space, provider, power=2)
+
+# Identity on Lebesgue3D
+ident   = GeneralizedBoxLaplacian(space, provider, power=0)
+```
+
+**Convention:** powers are taken of the *positive* operator $(-\alpha\Delta)$,
+not the raw $\Delta$.  This keeps all Neumann/Dirichlet eigenvalues
+non-negative.  Only integer powers are supported in the current release.
+For negative powers, modes satisfying $|\lambda_k| < \varepsilon$ are
+suppressed to zero (pseudoinverse / mean-zero convention).
+
+`BoxLaplacian` and `InverseBoxLaplacian` remain available as semantic
+shorthand and are implemented as thin wrappers:
+- `BoxLaplacian(space, provider)` ≡ `GeneralizedBoxLaplacian(..., power=1, alpha=1.0)`
+- `InverseBoxLaplacian(space, provider)` ≡ `GeneralizedBoxLaplacian(..., power=-1)` for the default pseudoinverse mode
+
 ## Planned Next Steps
 
-- `Sobolev3D` / Bessel-Sobolev operators on `BoxDomain`
+- Fractional / non-integer spectral powers via exact functional calculus
+- Shifted/Bessel-Sobolev variants: $(−\alpha\Delta + \delta I)^s$
 - `BallDomain` (spherical coordinate support)
 - Surface-integral and point-evaluation kernel families
 - End-to-end inversion workflow demo
