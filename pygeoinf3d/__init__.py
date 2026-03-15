@@ -25,6 +25,7 @@ from .providers.tensor_product import TensorProductProvider
 from .operators.base import SpectralOperator3D
 from .operators.laplacian_box import BoxLaplacian
 from .operators.inverse_laplacian_box import InverseBoxLaplacian
+from .operators.generalized_box_laplacian import GeneralizedBoxLaplacian
 
 # SOLA operator — Phases 1-4: volume-kernel operator core, API locked
 from .operators.sola import SOLAOperator3D
@@ -63,6 +64,7 @@ __all__ = [
     "SpectralOperator3D",
     "BoxLaplacian",
     "InverseBoxLaplacian",
+    "GeneralizedBoxLaplacian",
     # SOLA operator — Phases 1-4
     "SOLAOperator3D",
     # Sampling

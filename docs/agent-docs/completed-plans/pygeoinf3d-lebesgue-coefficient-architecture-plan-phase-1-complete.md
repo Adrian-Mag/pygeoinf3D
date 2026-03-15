@@ -49,4 +49,4 @@ feat(lebesgue): add representation boundary for coefficient workflows
 
 Plan: pygeoinf3D/docs/agent-docs/active-plans/pygeoinf3d-lebesgue-coefficient-architecture-plan.md
 Phase: 1 of 5
-Related: pygeoinf3D/docs/agent-docs/active-plans/pygeoinf3d-lebesgue-coefficient-architecture-plan-phase-1-complete.md
+Related: pygeoinf3D/docs/agent-docs/completed-plans/pygeoinf3d-lebesgue-coefficient-architecture-plan-phase-1-complete.md

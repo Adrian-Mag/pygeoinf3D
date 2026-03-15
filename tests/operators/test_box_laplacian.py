@@ -247,3 +247,44 @@ class TestBoxLaplacianSpectralInterface:
 
     def test_neumann_is_spectral_operator(self, laplacian_neumann):
         assert isinstance(laplacian_neumann, SpectralOperator3D)
+
+
+# ---------------------------------------------------------------------------
+# Regression: positive-operator convention (for Phase 3 wrapper verification)
+# ---------------------------------------------------------------------------
+
+class TestBoxLaplacianPositiveOperatorConvention:
+    """Regression tests pinning the positive-operator (-Delta) convention.
+
+    BoxLaplacian represents (-alpha*Delta) with alpha=1. These tests document
+    the exact eigenvalue formula a Phase 3 refactoring to
+    GeneralizedBoxLaplacian(power=1, alpha=1) must match.
+    """
+
+    def test_dirichlet_eigenvalue0_is_3pi2_on_unit_box(
+        self, unit_box, space, dirichlet_provider
+    ):
+        """On [0,1]^3 Dirichlet, lambda_0 = 3*pi^2 (analytical)."""
+        lap = BoxLaplacian(space, dirichlet_provider)
+        npt.assert_almost_equal(lap.get_eigenvalue(0), 3.0 * np.pi ** 2, decimal=8)
+
+    def test_all_dirichlet_eigenvalues_strictly_positive(
+        self, space, dirichlet_provider
+    ):
+        """All Dirichlet eigenvalues are strictly positive (no null space)."""
+        lap = BoxLaplacian(space, dirichlet_provider)
+        for i in range(lap.n_modes):
+            assert lap.get_eigenvalue(i) > 0, f"Mode {i} eigenvalue not positive"
+
+    def test_neumann_zero_mode_eigenvalue_is_zero(
+        self, space, neumann_provider
+    ):
+        """Neumann mode 0 eigenvalue = 0 (constant function in null space)."""
+        lap = BoxLaplacian(space, neumann_provider)
+        npt.assert_allclose(lap.get_eigenvalue(0), 0.0, atol=1e-12)
+
+    def test_neumann_nonzero_modes_positive(self, space, neumann_provider):
+        """Neumann modes 1+ are strictly positive."""
+        lap = BoxLaplacian(space, neumann_provider)
+        for i in range(1, lap.n_modes):
+            assert lap.get_eigenvalue(i) > 0, f"Neumann mode {i} eigenvalue not positive"

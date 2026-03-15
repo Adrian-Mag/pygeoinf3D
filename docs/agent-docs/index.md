@@ -9,4 +9,4 @@ This directory contains plans, references, and theory notes for `pygeoinf3D`.
 
 Useful package-scoped notes:
 - `references/living/pygeoinf3d-reference.md` — condensed living package reference
-- `references/operator-specific-integration-future-note.md` — future design note on modular operator-specific integration backends
+- `references/legacy/operator-specific-integration-future-note.md` — archived design note on modular operator-specific integration backends

@@ -59,4 +59,4 @@ feat(lebesgue): add gram-aware coefficient backends
 
 Plan: pygeoinf3D/docs/agent-docs/active-plans/pygeoinf3d-lebesgue-coefficient-architecture-plan.md
 Phase: 2 of 5
-Related: pygeoinf3D/docs/agent-docs/active-plans/pygeoinf3d-lebesgue-coefficient-architecture-plan-phase-2-complete.md
+Related: pygeoinf3D/docs/agent-docs/completed-plans/pygeoinf3d-lebesgue-coefficient-architecture-plan-phase-2-complete.md

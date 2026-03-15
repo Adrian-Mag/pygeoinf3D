@@ -391,3 +391,53 @@ class TestInverseBoxLaplacianSpectralInterface:
             phi_inv = inv_lap_dirichlet.get_eigenfunction(i)
             phi_prov = dirichlet_provider.get_eigenfunction(i)
             npt.assert_allclose(phi_inv(pts), phi_prov(pts), rtol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# Regression: pseudoinverse convention (for Phase 3 wrapper verification)
+# ---------------------------------------------------------------------------
+
+class TestInverseBoxLaplacianPseudoinverseConvention:
+    """Regression tests pinning the pseudoinverse / mean-zero convention.
+
+    InverseBoxLaplacian(null_space_handling='pseudoinverse') implements the
+    pseudoinverse of (-Delta).  Phase 3 must match these semantics when
+    InverseBoxLaplacian is refactored as a thin wrapper around
+    GeneralizedBoxLaplacian(power=-1, alpha=1).
+    """
+
+    def test_pseudoinverse_dirichlet_eigenvalue0_is_1_over_3pi2(
+        self, space, dirichlet_provider
+    ):
+        """On [0,1]^3 Dirichlet, inv eigenvalue_0 = 1/(3*pi^2) (analytical)."""
+        inv_lap = InverseBoxLaplacian(space, dirichlet_provider)
+        npt.assert_almost_equal(
+            inv_lap.get_eigenvalue(0), 1.0 / (3.0 * np.pi ** 2), decimal=8
+        )
+
+    def test_pseudoinverse_neumann_zero_mode_eigenvalue_is_zero(
+        self, space, neumann_provider
+    ):
+        """Neumann mode 0 eigenvalue = 0 (suppressed in pseudoinverse)."""
+        inv_lap = InverseBoxLaplacian(
+            space, neumann_provider, null_space_handling='pseudoinverse'
+        )
+        npt.assert_allclose(inv_lap.get_eigenvalue(0), 0.0, atol=1e-12)
+
+    def test_pseudoinverse_dirichlet_all_eigenvalues_positive(
+        self, space, dirichlet_provider
+    ):
+        """All pseudoinverse Dirichlet eigenvalues are strictly positive."""
+        inv_lap = InverseBoxLaplacian(space, dirichlet_provider)
+        for i in range(inv_lap.n_modes):
+            assert inv_lap.get_eigenvalue(i) > 0, f"Mode {i} eigenvalue not positive"
+
+    def test_pseudoinverse_neumann_nonzero_modes_positive(
+        self, space, neumann_provider
+    ):
+        """Neumann modes 1+ have positive inverse eigenvalues."""
+        inv_lap = InverseBoxLaplacian(
+            space, neumann_provider, null_space_handling='pseudoinverse'
+        )
+        for i in range(1, inv_lap.n_modes):
+            assert inv_lap.get_eigenvalue(i) > 0, f"Neumann mode {i} not positive"
