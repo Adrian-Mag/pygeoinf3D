@@ -9,8 +9,11 @@ from pygeoinf3d.core.functions import Function3D
 from pygeoinf3d.geometries.box.domain import BoxDomain
 from pygeoinf3d.plot import (
     evaluate_function3d_on_axis_slice,
+    evaluate_function3d_on_regular_grid,
     plot_function3d_axis_slice,
     plot_function3d_axis_slider,
+    plot_function3d_volume_dropdown,
+    plot_function3d_isosurface,
     compare_function3d_axis_sliders,
 )
 
@@ -124,6 +127,24 @@ def test_default_coord(linear_function):
     np.testing.assert_allclose(values[mid, mid], 1.5)
 
 
+def test_evaluate_regular_grid(linear_function):
+    X, Y, Z, values = evaluate_function3d_on_regular_grid(
+        linear_function,
+        resolution=4,
+    )
+
+    assert X.shape == (4, 4, 4)
+    assert Y.shape == (4, 4, 4)
+    assert Z.shape == (4, 4, 4)
+    assert values.shape == (4, 4, 4)
+    np.testing.assert_allclose(values, X + Y + Z)
+
+
+def test_evaluate_regular_grid_validation(linear_function):
+    with pytest.raises(ValueError, match="integer >= 2"):
+        evaluate_function3d_on_regular_grid(linear_function, resolution=1)
+
+
 def test_plot_axis_slider_smoke(linear_function):
     go = pytest.importorskip("plotly.graph_objects")
 
@@ -221,6 +242,83 @@ def test_plot_axis_slider_requires_plotly(linear_function, monkeypatch):
             axis='z',
             show_plot=False,
         )
+
+
+def test_plot_function3d_volume_dropdown_smoke(two_functions):
+    go = pytest.importorskip("plotly.graph_objects")
+
+    fig = cast(Any, plot_function3d_volume_dropdown(
+        two_functions,
+        resolution=5,
+        show_plot=False,
+        labels=["First", "Second"],
+    ))
+
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) == 2
+    assert fig.data[0].type == 'volume'
+    assert fig.data[0].visible is True
+    assert fig.data[1].visible is False
+    assert fig.layout.updatemenus[0].buttons[0].label == 'First'
+    assert fig.layout.scene.xaxis.title.text == 'x'
+    assert fig.layout.scene.yaxis.title.text == 'y'
+    assert fig.layout.scene.zaxis.title.text == 'z'
+
+
+def test_plot_function3d_volume_dropdown_validation(two_functions):
+    with pytest.raises(ValueError, match="non-empty"):
+        plot_function3d_volume_dropdown([], show_plot=False)
+
+    with pytest.raises(ValueError, match="same length"):
+        plot_function3d_volume_dropdown(
+            two_functions,
+            labels=['only one'],
+            show_plot=False,
+        )
+
+    with pytest.raises(ValueError, match=r"interval \(0, 100\]"):
+        plot_function3d_volume_dropdown(
+            two_functions,
+            robust_percentile=0.0,
+            show_plot=False,
+        )
+
+
+def test_plot_function3d_volume_dropdown_requires_shared_bbox(box_domain):
+    pytest.importorskip("plotly.graph_objects")
+
+    other_domain = BoxDomain(
+        np.array([0.0, 0.0, 0.0]),
+        np.array([2.0, 2.0, 2.0]),
+    )
+
+    def f(x):
+        x = np.asarray(x)
+        return x[0] if x.ndim == 1 else x[:, 0]
+
+    fn1 = Function3D(box_domain, evaluate_callable=f)
+    fn2 = Function3D(other_domain, evaluate_callable=f)
+
+    with pytest.raises(ValueError, match="bounding box"):
+        plot_function3d_volume_dropdown(
+            [fn1, fn2],
+            show_plot=False,
+        )
+
+
+def test_plot_function3d_isosurface_smoke(linear_function):
+    go = pytest.importorskip("plotly.graph_objects")
+
+    fig = cast(Any, plot_function3d_isosurface(
+        linear_function,
+        resolution=5,
+        n_levels=4,
+        show_plot=False,
+    ))
+
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) == 1
+    assert fig.data[0].type == 'isosurface'
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +421,7 @@ def test_compare_function3d_axis_sliders_axis_labels(two_functions):
 
 
 def test_compare_function3d_axis_sliders_per_panel_color_limits(box_domain):
-    """Each panel gets its own colour limits; different-magnitude functions stay visible."""
+    """Each panel keeps its own colour scale when magnitudes differ."""
     pytest.importorskip("plotly.graph_objects")
 
     # f1 ranges over [0, 1], f2 over [0, 100] — very different magnitudes
@@ -351,10 +449,14 @@ def test_compare_function3d_axis_sliders_per_panel_color_limits(box_domain):
 
     # Per-panel scaling: the two panels must have different zmax values
     zmaxs = [trace.zmax for trace in fig.data]
-    assert zmaxs[1] > 10 * zmaxs[0], "Panel 2 (f2) should have a much larger zmax than panel 1 (f1)"
+    assert zmaxs[1] > 10 * zmaxs[0], (
+        "Panel 2 (f2) should have a much larger zmax than panel 1 (f1)"
+    )
 
 
-def test_compare_function3d_axis_sliders_global_color_limits_via_vmin_vmax(two_functions):
+def test_compare_function3d_axis_sliders_global_color_limits_via_vmin_vmax(
+    two_functions,
+):
     """Passing explicit vmin/vmax locks all panels to the same colour scale."""
     pytest.importorskip("plotly.graph_objects")
 
@@ -378,7 +480,9 @@ def test_compare_function3d_axis_sliders_validation_empty(box_domain):
         compare_function3d_axis_sliders([], show_plot=False)
 
 
-def test_compare_function3d_axis_sliders_validation_titles_length(two_functions):
+def test_compare_function3d_axis_sliders_validation_titles_length(
+    two_functions,
+):
     pytest.importorskip("plotly.graph_objects")
 
     with pytest.raises(ValueError, match="same length"):
@@ -394,7 +498,10 @@ def test_compare_function3d_axis_sliders_validation_titles_length(two_functions)
 def test_compare_function3d_axis_sliders_validation_bbox_mismatch(box_domain):
     pytest.importorskip("plotly.graph_objects")
 
-    other_domain = BoxDomain(np.array([0.0, 0.0, 0.0]), np.array([2.0, 2.0, 2.0]))
+    other_domain = BoxDomain(
+        np.array([0.0, 0.0, 0.0]),
+        np.array([2.0, 2.0, 2.0]),
+    )
 
     def f(x):
         x = np.asarray(x)
@@ -412,7 +519,10 @@ def test_compare_function3d_axis_sliders_validation_bbox_mismatch(box_domain):
         )
 
 
-def test_compare_function3d_axis_sliders_requires_plotly(two_functions, monkeypatch):
+def test_compare_function3d_axis_sliders_requires_plotly(
+    two_functions,
+    monkeypatch,
+):
     def _raise_import_error():
         raise ImportError("plotly missing")
 

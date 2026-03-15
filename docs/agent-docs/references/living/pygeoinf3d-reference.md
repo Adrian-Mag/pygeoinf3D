@@ -1,7 +1,7 @@
 # pygeoinf3D Living Reference
 
-> **Status:** `SpectralOperator3D` ABC added; `BoxLaplacian`/`InverseBoxLaplacian` retrofitted to satisfy it; `KLSampler3D` implemented in new `sampling/` sub-package. 33 new tests added; full suite at 496 passed.
-> **Last updated:** 2026-03-14
+> **Status:** `SpectralOperator3D` ABC added; `BoxLaplacian`/`InverseBoxLaplacian` retrofitted to satisfy it; `KLSampler3D` implemented in new `sampling/` sub-package; Phase 1 KL fast-path evaluators added (`has_tensor_product_structure`, `sample_from_xis`, `evaluate_on_regular_grid`, `evaluate_on_axis_slice`). 24 new tests in this phase; full suite at 526 passed.
+> **Last updated:** 2026-03-15
 
 ---
 
@@ -100,7 +100,7 @@ pygeoinf3D/
 │   └── least_norm_inversion_demo.ipynb   # Noiseless minimum-norm inversion with SOLAOperator3D
 ├── pygeoinf3d/
 │   ├── __init__.py          # Re-exports all public API
-│   ├── plot.py              # Visualization (static slices + optional Plotly slider) ← Phase 3 + interactive demo
+│   ├── plot.py              # Visualization (static slices + Plotly sliders + volume/isosurface helpers)
 │   ├── core/
 │   │   ├── __init__.py
 │   │   ├── config.py        # AxisAlignedBoundingBox, CoordinateSystem
@@ -450,17 +450,21 @@ parent's `_components` array, which is a fake `np.zeros(0)` placeholder in
 
 ## Plotting Module — `pygeoinf3d.plot`
 
-Slice-based visualization utilities for `Function3D` objects.  Core Matplotlib
-slice plots are always available; optional Plotly support adds an interactive
-axis slider for notebook exploration.
+Slice-based and volumetric visualization utilities for `Function3D` objects.
+Core Matplotlib slice plots are always available; optional Plotly support adds
+interactive slice sliders, dropdown-controlled volume rendering, and 3D
+isosurface views for notebook exploration.
 
 ### Public API
 
 ```python
 from pygeoinf3d.plot import (
     evaluate_function3d_on_axis_slice,
+    evaluate_function3d_on_regular_grid,
     plot_function3d_axis_slice,
     plot_function3d_axis_slider,
+    plot_function3d_volume_dropdown,
+    plot_function3d_isosurface,
     compare_function3d_axis_sliders,
 )
 ```
@@ -492,6 +496,21 @@ malformed resolution (non-positive, wrong tuple length).
 
 Batch-evaluates via `function(points)` where `points` has shape `(nu*nv, 3)`.
 Coerces result with `np.asarray(...)` before reshape to handle scalar returns.
+
+#### `evaluate_function3d_on_regular_grid`
+
+```python
+evaluate_function3d_on_regular_grid(
+    function: Function3D,
+    resolution: int = 25,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+```
+
+Samples a `Function3D` on a regular 3D axis-aligned grid covering the full
+bounding box of the domain. Returns `(X, Y, Z, values)`, each with shape
+`(resolution, resolution, resolution)`.
+
+This is the shared sampling backend for the volumetric Plotly helpers.
 
 #### `plot_function3d_axis_slice`
 
@@ -548,6 +567,55 @@ Raises `ImportError` if Plotly is not installed. Install the optional extra:
 ```bash
 pip install pygeoinf3d[interactive]
 ```
+
+#### `plot_function3d_volume_dropdown`
+
+```python
+plot_function3d_volume_dropdown(
+    functions: list[Function3D],
+    *,
+    resolution: int = 25,
+    opacity: float = 0.15,
+    surface_count: int = 15,
+    colorscale: str = 'RdBu_r',
+    robust_percentile: float = 95.0,
+    labels: list[str] | None = None,
+    show_plot: bool = True,
+    title: str | None = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
+) -> plotly.graph_objects.Figure
+```
+
+Creates a Plotly `go.Volume` viewer with one trace per function and a dropdown
+menu to switch between them. The functions are sampled internally on a shared
+regular 3D grid, so notebook demos can stay at the level of `Function3D`
+objects rather than manual point sampling.
+
+If `vmin` and `vmax` are omitted, the colour range is chosen symmetrically
+from the specified percentile of absolute sampled values.
+
+#### `plot_function3d_isosurface`
+
+```python
+plot_function3d_isosurface(
+    function: Function3D,
+    *,
+    resolution: int = 30,
+    n_levels: int = 3,
+    sigma: float = 1.0,
+    opacity: float = 0.5,
+    colorscale: str = 'RdBu_r',
+    vmin: float | None = None,
+    vmax: float | None = None,
+    show_plot: bool = True,
+    title: str | None = None,
+) -> plotly.graph_objects.Figure
+```
+
+Creates a Plotly `go.Isosurface` figure for a single `Function3D`, sampling the
+function internally on a regular 3D grid. If `vmin` and `vmax` are omitted,
+the iso-range defaults to `± sigma * std(values)`.
 
 #### `compare_function3d_axis_sliders`
 
@@ -1072,9 +1140,13 @@ KLSampler3D(operator: SpectralOperator3D,
 | `n_modes: int` | Number of KL modes retained |
 | `space: Lebesgue3D` | The function space |
 | `eigenvalues: np.ndarray` | Shape `(n_modes,)` copy of operator eigenvalues |
+| `has_tensor_product_structure: bool` | True if operator is backed by `TensorProductProvider`; enables fast evaluators |
 | `sample() → Function3D` | Draw one sample: `m + Σ sqrt(λ_k) ξ_k Φ_k` |
 | `samples(n) → list[Function3D]` | Draw *n* independent samples |
+| `sample_from_xis(xis) → Function3D` | Deterministic sample from given xi array `(n_modes,)`; raises `ValueError` on bad shape |
 | `covariance_factor` (property) | `LinearOperator: EuclideanSpace(K) → Lebesgue3D` with `L(w) = Σ sqrt(λ_k) w_k Φ_k` |
+| `evaluate_on_regular_grid(xis, resolution, *, plot_n_modes)` | **Fast path.** Vectorized `einsum` evaluation on regular 3D grid. Returns `(X, Y, Z, values)` each shape `(Nx, Ny, Nz)`. Requires TP structure; raises `TypeError` otherwise. |
+| `evaluate_on_axis_slice(xis, axis, coord, resolution, *, plot_n_modes)` | **Fast path.** Vectorized `einsum` evaluation on axis-aligned 2D slice. Returns `(grid_u, grid_v, values)` each shape `(Nu, Nv)`. Requires TP structure; raises `TypeError` otherwise. |
 
 **Adjoint of `covariance_factor`:** `L*(f) = [sqrt(λ_k) ⟨f, Φ_k⟩]_k`, computed via `space.inner_product`.
 
@@ -1308,7 +1380,7 @@ conda run -n inferences3 python -m pytest tests/ -q
 - `tests/operators/test_sola.py` — 29 tests  ← SOLA Phases 1+2+3+4
 - `tests/operators/test_inverse_box_laplacian.py` — 32 tests  ← InverseLaplacian plan + spectral interface
 - `tests/sampling/test_kl_sampler.py` — 23 tests  ← spectral-kl plan
-- `tests/test_plot.py` — 12 tests  ← plot Phase 3 + interactive slider
+- `tests/test_plot.py` — 17 tests  ← plot Phase 3 + slider + volume/isosurface helpers
 
 ---
 

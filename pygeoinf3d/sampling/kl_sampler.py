@@ -44,7 +44,7 @@ Typical usage (prior for a 3D PLI notebook)::
 
 from __future__ import annotations
 
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -54,6 +54,22 @@ from pygeoinf.linear_operators import LinearOperator
 from pygeoinf3d.core.functions import Function3D
 from pygeoinf3d.operators.base import SpectralOperator3D
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+
+
+def _parse_tp_axis(axis) -> int:
+    """Normalise axis argument to int index 0/1/2."""
+    if isinstance(axis, (int, np.integer)):
+        idx = int(axis)
+    elif isinstance(axis, str):
+        mapping = {'x': 0, 'y': 1, 'z': 2}
+        if axis not in mapping:
+            raise ValueError(f"axis must be 'x', 'y', or 'z'; got {axis!r}.")
+        idx = mapping[axis]
+    else:
+        raise TypeError(f"axis must be str or int; got {type(axis)!r}.")
+    if idx not in (0, 1, 2):
+        raise ValueError(f"axis index must be 0, 1, or 2; got {idx}.")
+    return idx
 
 
 class KLSampler3D:
@@ -154,6 +170,11 @@ class KLSampler3D:
             np.maximum(self._eigenvalues, 0.0)
         )
 
+        # Detect tensor-product structure for fast-path evaluators
+        from pygeoinf3d.providers.tensor_product import TensorProductProvider as _TPA
+        _tp = getattr(operator, '_provider', None)
+        self._tp_provider = _tp if isinstance(_tp, _TPA) else None
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
@@ -172,6 +193,16 @@ class KLSampler3D:
     def eigenvalues(self) -> np.ndarray:
         """Array of shape *(n_modes,)* with the operator eigenvalues."""
         return self._eigenvalues.copy()
+
+    @property
+    def has_tensor_product_structure(self) -> bool:
+        """True if the operator is backed by a :class:`TensorProductProvider`.
+
+        When True, the fast vectorized evaluators
+        :meth:`evaluate_on_regular_grid` and :meth:`evaluate_on_axis_slice`
+        are available.
+        """
+        return self._tp_provider is not None
 
     # ------------------------------------------------------------------
     # Sampling
@@ -218,6 +249,292 @@ class KLSampler3D:
         list of :class:`~pygeoinf3d.core.functions.Function3D`
         """
         return [self.sample() for _ in range(n)]
+
+    def sample_from_xis(self, xis: np.ndarray) -> Function3D:
+        """Build a deterministic sample :class:`Function3D` from given xi values.
+
+        Constructs
+
+        .. math::
+
+            u = m + \\sum_{k=0}^{K-1} \\sqrt{\\lambda_k}\\,\\xi_k\\,\\Phi_k
+
+        without drawing new random numbers. Useful for testing and reproducible
+        evaluation pipelines.
+
+        Parameters
+        ----------
+        xis:
+            Array of shape ``(n_modes,)`` — the standard-normal coefficients.
+
+        Returns
+        -------
+        :class:`~pygeoinf3d.core.functions.Function3D`
+            The reconstructed sample function.
+
+        Raises
+        ------
+        ValueError
+            If ``xis.shape != (n_modes,)``.
+        """
+        xis = np.asarray(xis, dtype=float)
+        if xis.shape != (self._n_modes,):
+            raise ValueError(
+                f"xis must have shape ({self._n_modes},); got {xis.shape}."
+            )
+        weights: List[float] = (self._sqrt_eigenvalues * xis).tolist()
+        mean_fn = self._mean
+        snapshot = list(zip(weights, self._eigenfunctions))
+
+        def evaluate(x: np.ndarray) -> Union[float, np.ndarray]:
+            x = np.asarray(x, dtype=float)
+            total = mean_fn(x)
+            for w_k, phi_k in snapshot:
+                if w_k != 0.0:
+                    total = total + w_k * phi_k(x)
+            return total
+
+        return Function3D(self._space.function_domain, evaluate_callable=evaluate)
+
+    # ------------------------------------------------------------------
+    # Fast tensor-product evaluators
+    # ------------------------------------------------------------------
+
+    def evaluate_on_regular_grid(
+        self,
+        xis: np.ndarray,
+        resolution: Union[int, Tuple[int, int, int]] = 25,
+        *,
+        plot_n_modes: Optional[int] = None,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Vectorized KL evaluation on a regular 3-D axis-aligned grid.
+
+        Requires the operator to be backed by a :class:`TensorProductProvider`
+        (i.e. :attr:`has_tensor_product_structure` is True).  Uses an
+        ``einsum``-based tensor-product decomposition that avoids the Python
+        loop over grid points used by the generic :class:`Function3D` path.
+
+        The evaluation is numerically identical to
+        :meth:`sample_from_xis`\\ ``(xis)(grid_points)`` up to floating-point
+        rounding.
+
+        Parameters
+        ----------
+        xis:
+            Standard-normal coefficients, shape ``(n_modes,)``.
+        resolution:
+            Grid resolution. A positive ``int`` → ``(n, n, n)``; a 3-tuple of
+            positive ints ``(Nx, Ny, Nz)`` → asymmetric grid.
+        plot_n_modes:
+            If given, only the first *plot_n_modes* modes are used (must be in
+            ``[1, n_modes]``). The remaining modes in *xis* are ignored.
+            Useful for fast approximate visualisation without constructing a
+            separate :class:`KLSampler3D`.
+
+        Returns
+        -------
+        X, Y, Z, values : np.ndarray, each of shape ``(Nx, Ny, Nz)``
+            Meshgrid coordinates (``indexing='ij'``) and the evaluated field.
+
+        Raises
+        ------
+        TypeError
+            If the operator does not have tensor-product structure.
+        ValueError
+            If *plot_n_modes* is out of range.
+        """
+        if not self.has_tensor_product_structure:
+            raise TypeError(
+                "evaluate_on_regular_grid requires tensor-product structure. "
+                "The operator backing this KLSampler3D does not expose a "
+                "TensorProductProvider."
+            )
+        xis = np.asarray(xis, dtype=float)
+        n_eff = self._resolve_plot_n_modes(plot_n_modes)
+
+        provider = self._tp_provider
+        bbox = provider._box.bounding_box()
+        low, high = bbox.low, bbox.high
+
+        if isinstance(resolution, (int, np.integer)):
+            Nx = Ny = Nz = int(resolution)
+        else:
+            Nx, Ny, Nz = int(resolution[0]), int(resolution[1]), int(resolution[2])
+
+        xs = np.linspace(low[0], high[0], Nx)
+        ys = np.linspace(low[1], high[1], Ny)
+        zs = np.linspace(low[2], high[2], Nz)
+
+        Phi_x, Phi_y, Phi_z = self._build_basis_matrices(xs, ys, zs, n_eff)
+        weights = self._sqrt_eigenvalues[:n_eff] * xis[:n_eff]
+
+        # values[i,j,l] = sum_k w[k] * Phi_x[i,k] * Phi_y[j,k] * Phi_z[l,k]
+        values = np.einsum('ik,jk,lk,k->ijl', Phi_x, Phi_y, Phi_z, weights)
+
+        # Add mean (evaluated generically on the full grid)
+        X, Y, Z = np.meshgrid(xs, ys, zs, indexing='ij')
+        grid_pts = np.stack([X, Y, Z], axis=-1).reshape(-1, 3)
+        mean_vals = np.asarray(self._mean(grid_pts), dtype=float).reshape(Nx, Ny, Nz)
+        values += mean_vals
+
+        return X, Y, Z, values
+
+    def evaluate_on_axis_slice(
+        self,
+        xis: np.ndarray,
+        axis: Union[int, str] = 2,
+        coord: Optional[float] = None,
+        resolution: Union[int, Tuple[int, int]] = 100,
+        *,
+        plot_n_modes: Optional[int] = None,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Vectorized KL evaluation on an axis-aligned 2-D slice.
+
+        Requires :attr:`has_tensor_product_structure`.  For a slice fixing
+        axis *a* at coordinate *c*, the evaluation collapses the *a*-direction
+        1-D basis into a scalar per mode and then evaluates the 2-D sum via
+        an ``einsum`` over the two free axes, giving it the same numerical
+        result as the generic path but computed in fully vectorized form.
+
+        Parameters
+        ----------
+        xis:
+            Standard-normal coefficients, shape ``(n_modes,)``.
+        axis:
+            The axis to fix: ``'x'``/``'y'``/``'z'`` or ``0``/``1``/``2``.
+        coord:
+            Coordinate value along *axis* for the slice.  Defaults to the
+            midpoint of the domain's bounding box in that direction.
+        resolution:
+            Positive ``int`` → ``(n, n)``; 2-tuple ``(Nu, Nv)`` for
+            asymmetric grids.
+        plot_n_modes:
+            Visualization-only mode cap; same semantics as in
+            :meth:`evaluate_on_regular_grid`.
+
+        Returns
+        -------
+        grid_u, grid_v, values : np.ndarray, each of shape ``(Nu, Nv)``
+            Meshgrid coordinates (``indexing='ij'``) on the two free axes
+            and the evaluated field.
+
+        Raises
+        ------
+        TypeError
+            If the operator does not have tensor-product structure.
+        ValueError
+            If *plot_n_modes* is out of range.
+        """
+        if not self.has_tensor_product_structure:
+            raise TypeError(
+                "evaluate_on_axis_slice requires tensor-product structure. "
+                "The operator backing this KLSampler3D does not expose a "
+                "TensorProductProvider."
+            )
+        from pygeoinf3d.providers.tensor_product import _make_1d_phi
+
+        xis = np.asarray(xis, dtype=float)
+        n_eff = self._resolve_plot_n_modes(plot_n_modes)
+        axis_idx = _parse_tp_axis(axis)
+
+        provider = self._tp_provider
+        bbox = provider._box.bounding_box()
+        low, high = bbox.low, bbox.high
+
+        if coord is None:
+            coord = float(0.5 * (low[axis_idx] + high[axis_idx]))
+
+        # The two free axes (in canonical order: the two axes that are not axis_idx)
+        u_idx, v_idx = [i for i in range(3) if i != axis_idx]
+
+        if isinstance(resolution, (int, np.integer)):
+            Nu = Nv = int(resolution)
+        else:
+            Nu, Nv = int(resolution[0]), int(resolution[1])
+
+        us = np.linspace(low[u_idx], high[u_idx], Nu)
+        vs = np.linspace(low[v_idx], high[v_idx], Nv)
+
+        bc = provider.bc_type
+        ax = provider._low
+        lengths = provider._lengths
+
+        # Build 1D basis matrices for the two free axes and evaluate fixed axis
+        Phi_u = np.empty((Nu, n_eff))
+        Phi_v = np.empty((Nv, n_eff))
+        phi_fixed = np.empty(n_eff)
+
+        for k in range(n_eff):
+            ki = provider.get_multi_index(k)  # (kx, ky, kz)
+            Phi_u[:, k] = _make_1d_phi(ki[u_idx], ax[u_idx], lengths[u_idx], bc)(us)
+            Phi_v[:, k] = _make_1d_phi(ki[v_idx], ax[v_idx], lengths[v_idx], bc)(vs)
+            phi_fixed[k] = float(
+                _make_1d_phi(ki[axis_idx], ax[axis_idx], lengths[axis_idx], bc)(coord)
+            )
+
+        # Effective weights absorb the fixed-axis contribution
+        effective_weights = self._sqrt_eigenvalues[:n_eff] * xis[:n_eff] * phi_fixed
+
+        # values[i,j] = sum_k eff_w[k] * Phi_u[i,k] * Phi_v[j,k]
+        values = np.einsum('ik,jk,k->ij', Phi_u, Phi_v, effective_weights)
+
+        # Add mean (evaluated generically on the slice grid)
+        grid_u, grid_v = np.meshgrid(us, vs, indexing='ij')
+        pts = np.empty((Nu * Nv, 3))
+        pts[:, axis_idx] = float(coord)
+        pts[:, u_idx] = grid_u.ravel()
+        pts[:, v_idx] = grid_v.ravel()
+        mean_vals = np.asarray(self._mean(pts), dtype=float).reshape(Nu, Nv)
+        values += mean_vals
+
+        return grid_u, grid_v, values
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_plot_n_modes(self, plot_n_modes: Optional[int]) -> int:
+        """Validate and return the effective number of modes to use."""
+        if plot_n_modes is None:
+            return self._n_modes
+        n = int(plot_n_modes)
+        if n < 1 or n > self._n_modes:
+            raise ValueError(
+                f"plot_n_modes must be in [1, {self._n_modes}]; got {plot_n_modes!r}."
+            )
+        return n
+
+    def _build_basis_matrices(
+        self,
+        xs: np.ndarray,
+        ys: np.ndarray,
+        zs: np.ndarray,
+        n_modes: int,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Compute 1-D basis matrices for the tensor-product fast path.
+
+        Returns ``Phi_x`` of shape ``(Nx, n_modes)``, ``Phi_y`` of shape
+        ``(Ny, n_modes)``, and ``Phi_z`` of shape ``(Nz, n_modes)``, where
+        ``Phi_x[i, k] = phi_{kx_k}(xs[i])``, etc.
+        """
+        from pygeoinf3d.providers.tensor_product import _make_1d_phi
+
+        provider = self._tp_provider
+        bc = provider.bc_type
+        ax = provider._low
+        lengths = provider._lengths
+
+        Phi_x = np.empty((len(xs), n_modes))
+        Phi_y = np.empty((len(ys), n_modes))
+        Phi_z = np.empty((len(zs), n_modes))
+
+        for k in range(n_modes):
+            kx, ky, kz = provider.get_multi_index(k)
+            Phi_x[:, k] = _make_1d_phi(kx, ax[0], lengths[0], bc)(xs)
+            Phi_y[:, k] = _make_1d_phi(ky, ax[1], lengths[1], bc)(ys)
+            Phi_z[:, k] = _make_1d_phi(kz, ax[2], lengths[2], bc)(zs)
+
+        return Phi_x, Phi_y, Phi_z
 
     # ------------------------------------------------------------------
     # Covariance factor

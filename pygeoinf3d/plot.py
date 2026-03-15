@@ -99,6 +99,20 @@ def _validate_n_slices(n_slices: int) -> int:
     return n_slices_int
 
 
+def _validate_volume_resolution(resolution: int) -> int:
+    """Validate the regular 3D grid resolution for volume-style plots."""
+    if not isinstance(resolution, (int, np.integer)):
+        raise ValueError(
+            f"resolution must be an integer >= 2, got {resolution!r}."
+        )
+    resolution_int = int(resolution)
+    if resolution_int < 2:
+        raise ValueError(
+            f"resolution must be an integer >= 2, got {resolution_int}."
+        )
+    return resolution_int
+
+
 def _import_plotly_graph_objects() -> Any:
     """Import Plotly lazily so the dependency stays optional."""
     try:
@@ -182,6 +196,35 @@ def evaluate_function3d_on_axis_slice(
     values = values_flat.reshape(grid_u.shape)
 
     return grid_u, grid_v, values
+
+
+def evaluate_function3d_on_regular_grid(
+    function: Function3D,
+    resolution: int = 25,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Sample a Function3D on a regular axis-aligned 3D grid.
+
+    Args:
+        function: The function to sample.
+        resolution: Number of grid points along each axis.
+
+    Returns:
+        ``(X, Y, Z, values)`` where all arrays have shape
+        ``(resolution, resolution, resolution)``.
+    """
+    resolution_int = _validate_volume_resolution(resolution)
+
+    bbox = function.domain.bounding_box()
+    low, high = bbox.low, bbox.high
+
+    x = np.linspace(low[0], high[0], resolution_int)
+    y = np.linspace(low[1], high[1], resolution_int)
+    z = np.linspace(low[2], high[2], resolution_int)
+    X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+    points = np.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=1)
+    values = np.asarray(function(points), dtype=float).reshape(X.shape)
+
+    return X, Y, Z, values
 
 
 def plot_function3d_axis_slice(
@@ -403,6 +446,267 @@ def plot_function3d_axis_slider(
     return fig
 
 
+def plot_function3d_volume_dropdown(
+    functions: list[Function3D],
+    *,
+    resolution: int = 25,
+    opacity: float = 0.15,
+    surface_count: int = 15,
+    colorscale: str = 'RdBu_r',
+    robust_percentile: float = 95.0,
+    labels: Optional[list[str]] = None,
+    show_plot: bool = True,
+    title: Optional[str] = None,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+) -> "go.Figure":
+    """Create a Plotly volume viewer with a dropdown over functions.
+
+    Each function is sampled internally on the same regular 3D grid, and the
+    resulting volume traces are toggled via a Plotly dropdown menu.
+
+    Args:
+        functions: Non-empty list of ``Function3D`` objects sharing the same
+            bounding box.
+        resolution: Number of grid points per axis.
+        opacity: Per-trace volume opacity.
+        surface_count: Number of rendered isosurfaces inside each volume.
+        colorscale: Plotly colorscale name.
+        robust_percentile: When ``vmin`` and ``vmax`` are omitted, use a
+            symmetric colour range based on this percentile of absolute values.
+        labels: Dropdown labels for the functions. Defaults to
+            ``function.name`` or ``Function i``.
+        show_plot: Whether to call ``fig.show()`` before returning.
+        title: Figure title. Defaults to the first label.
+        vmin: Lower colour limit. Inferred from data if omitted.
+        vmax: Upper colour limit. Inferred from data if omitted.
+
+    Returns:
+        A Plotly ``Figure`` containing one ``go.Volume`` trace per function.
+    """
+    go = _import_plotly_graph_objects()
+
+    if not functions:
+        raise ValueError("functions must be a non-empty list of Function3D.")
+    if labels is not None and len(labels) != len(functions):
+        raise ValueError(
+            f"labels must have the same length as functions "
+            f"({len(functions)}), "
+            f"got {len(labels)}."
+        )
+    if not (0.0 < float(robust_percentile) <= 100.0):
+        raise ValueError(
+            "robust_percentile must lie in the interval (0, 100]."
+        )
+
+    resolution_int = _validate_volume_resolution(resolution)
+    bbox0 = functions[0].domain.bounding_box()
+    for i, fn in enumerate(functions[1:], 1):
+        bbox = fn.domain.bounding_box()
+        if not (
+            np.allclose(bbox.low, bbox0.low)
+            and np.allclose(bbox.high, bbox0.high)
+        ):
+            raise ValueError(
+                f"All functions must share the same bounding box. "
+                f"Function 0 has bbox {bbox0.low}–{bbox0.high}, "
+                f"function {i} has {bbox.low}–{bbox.high}."
+            )
+
+    plot_labels = labels if labels is not None else [
+        fn.name or f"Function {i + 1}" for i, fn in enumerate(functions)
+    ]
+
+    X = Y = Z = None
+    sampled_values: list[np.ndarray] = []
+    for fn in functions:
+        Xi, Yi, Zi, values = evaluate_function3d_on_regular_grid(
+            fn,
+            resolution=resolution_int,
+        )
+        if X is None:
+            X, Y, Z = Xi, Yi, Zi
+        sampled_values.append(values)
+
+    if X is None or Y is None or Z is None:
+        raise RuntimeError("Volume sampling produced no grid.")
+
+    all_values = np.concatenate([values.ravel() for values in sampled_values])
+    if vmin is None and vmax is None:
+        cmax = float(np.percentile(np.abs(all_values), robust_percentile))
+        used_vmin = -cmax
+        used_vmax = cmax
+    else:
+        used_vmin = float(all_values.min()) if vmin is None else float(vmin)
+        used_vmax = float(all_values.max()) if vmax is None else float(vmax)
+
+    x_flat = X.ravel().tolist()
+    y_flat = Y.ravel().tolist()
+    z_flat = Z.ravel().tolist()
+
+    fig = go.Figure()
+    for i, values in enumerate(sampled_values):
+        fig.add_trace(go.Volume(
+            x=x_flat,
+            y=y_flat,
+            z=z_flat,
+            value=values.ravel().tolist(),
+            isomin=used_vmin,
+            isomax=used_vmax,
+            opacity=opacity,
+            surface_count=surface_count,
+            colorscale=colorscale,
+            cmin=used_vmin,
+            cmax=used_vmax,
+            showscale=(i == 0),
+            colorbar=dict(title='Value', x=1.02),
+            name=plot_labels[i],
+            visible=(i == 0),
+        ))
+
+    buttons = []
+    for i, label in enumerate(plot_labels):
+        visibility = [j == i for j in range(len(plot_labels))]
+        active_title = title or f"{label} — volume rendering"
+        buttons.append(dict(
+            label=label,
+            method='update',
+            args=[{'visible': visibility}, {'title': active_title}],
+        ))
+
+    initial_title = title or f"{plot_labels[0]} — volume rendering"
+    fig.update_layout(
+        title=initial_title,
+        updatemenus=[dict(
+            buttons=buttons,
+            direction='down',
+            showactive=True,
+            x=0.0,
+            xanchor='left',
+            y=1.15,
+            yanchor='top',
+        )],
+        scene=dict(
+            xaxis_title='x',
+            yaxis_title='y',
+            zaxis_title='z',
+            xaxis=dict(range=[float(bbox0.low[0]), float(bbox0.high[0])]),
+            yaxis=dict(range=[float(bbox0.low[1]), float(bbox0.high[1])]),
+            zaxis=dict(range=[float(bbox0.low[2]), float(bbox0.high[2])]),
+            aspectmode='cube',
+        ),
+        margin=dict(l=0, r=0, b=0, t=80),
+        height=600,
+    )
+
+    if show_plot:
+        fig.show()
+
+    return fig
+
+
+def plot_function3d_isosurface(
+    function: Function3D,
+    *,
+    resolution: int = 30,
+    n_levels: int = 3,
+    sigma: float = 1.0,
+    opacity: float = 0.5,
+    colorscale: str = "RdBu_r",
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    show_plot: bool = True,
+    title: Optional[str] = None,
+) -> "go.Figure":
+    """Create an interactive 3D isosurface plot of a Function3D.
+
+    Evaluates the function on a regular 3D grid and renders isosurfaces
+    using Plotly's ``go.Isosurface`` trace.  By default the iso-level range
+    spans ±``sigma`` × standard deviation of the sampled values, which
+    works naturally for zero-mean Gaussian-prior samples.
+
+    Args:
+        function: The function to visualize.
+        resolution: Number of grid points per axis (``resolution³`` total
+            evaluation points).  Defaults to 30.
+        n_levels: Number of iso-levels rendered between the colour limits.
+            Defaults to 3.
+        sigma: When ``vmin``/``vmax`` are not supplied, the colour range is
+            set to ±``sigma`` × std of the sampled values.  Defaults to 1.0.
+        opacity: Opacity of each isosurface (0–1).  Defaults to 0.5.
+        colorscale: Plotly named colorscale.  Use a diverging scale such as
+            ``"RdBu_r"`` for zero-mean fields.  Defaults to ``"RdBu_r"``.
+        vmin: Lower iso-level bound.  Inferred from data if omitted.
+        vmax: Upper iso-level bound.  Inferred from data if omitted.
+        show_plot: Whether to call ``fig.show()`` before returning.
+        title: Figure title.  Defaults to ``function.name`` or a generic
+            description.
+
+    Returns:
+        A Plotly ``Figure`` containing a single ``go.Isosurface`` trace.
+
+    Raises:
+        ImportError: If Plotly is not installed.
+        ValueError: If ``resolution < 2`` or ``n_levels < 1``.
+    """
+    go = _import_plotly_graph_objects()
+
+    resolution_int = _validate_volume_resolution(resolution)
+    if n_levels < 1:
+        raise ValueError(f"n_levels must be >= 1, got {n_levels}.")
+
+    X, Y, Z, values = evaluate_function3d_on_regular_grid(
+        function,
+        resolution=resolution_int,
+    )
+
+    std = float(values.std())
+    used_vmin = float(vmin) if vmin is not None else -sigma * std
+    used_vmax = float(vmax) if vmax is not None else sigma * std
+
+    bbox = function.domain.bounding_box()
+    low, high = bbox.low, bbox.high
+
+    if title is None:
+        title = (function.name or "Function3D") + " — isosurface"
+
+    fig = go.Figure(go.Isosurface(
+        x=X.ravel().tolist(),
+        y=Y.ravel().tolist(),
+        z=Z.ravel().tolist(),
+        value=values.ravel().tolist(),
+        isomin=used_vmin,
+        isomax=used_vmax,
+        surface_count=n_levels,
+        opacity=opacity,
+        colorscale=colorscale,
+        cmin=used_vmin,
+        cmax=used_vmax,
+        caps=dict(x_show=False, y_show=False, z_show=False),
+        colorbar=dict(title="value"),
+    ))
+
+    fig.update_layout(
+        title=title,
+        scene=dict(
+            xaxis_title="x",
+            yaxis_title="y",
+            zaxis_title="z",
+            xaxis=dict(range=[low[0], high[0]]),
+            yaxis=dict(range=[low[1], high[1]]),
+            zaxis=dict(range=[low[2], high[2]]),
+            aspectmode="cube",
+        ),
+        height=600,
+        margin=dict(l=0, r=0, b=0, t=60),
+    )
+
+    if show_plot:
+        fig.show()
+
+    return fig
+
+
 def compare_function3d_axis_sliders(
     functions: list,
     axis: Union[int, str] = 'z',
@@ -415,7 +719,7 @@ def compare_function3d_axis_sliders(
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
 ) -> "go.Figure":
-    """Create a synced multi-panel Plotly slider comparing multiple Function3D objects.
+    """Create a synced multi-panel Plotly slider.
 
     All panels share a single slider that moves the slice plane along the
     chosen axis. The colour scale is derived globally across all panels and
@@ -423,9 +727,9 @@ def compare_function3d_axis_sliders(
 
     Args:
         functions: Non-empty list of ``Function3D`` objects to compare. All
-            functions must have compatible bounding boxes (same ``low``/``high``
-            corners up to floating-point tolerance).
-        axis: Slice-normal axis (``'x'``, ``'y'``, ``'z'`` or ``0``/``1``/``2``).
+            functions must have compatible bounding boxes.
+        axis: Slice-normal axis (``'x'``, ``'y'``, ``'z'`` or
+            ``0``/``1``/``2``).
         n_slices: Number of slider positions spanning the full axis extent.
         resolution: Grid resolution for each 2D slice. Positive ``int`` →
             ``(n, n)``; 2-tuple of positive ints → ``(nu, nv)``.
@@ -469,7 +773,10 @@ def compare_function3d_axis_sliders(
     bbox0 = functions[0].domain.bounding_box()
     for i, fn in enumerate(functions[1:], 1):
         bb = fn.domain.bounding_box()
-        if not (np.allclose(bb.low, bbox0.low) and np.allclose(bb.high, bbox0.high)):
+        if not (
+            np.allclose(bb.low, bbox0.low)
+            and np.allclose(bb.high, bbox0.high)
+        ):
             raise ValueError(
                 f"All functions must share the same bounding box. "
                 f"Function 0 has bbox {bbox0.low}–{bbox0.high}, "
