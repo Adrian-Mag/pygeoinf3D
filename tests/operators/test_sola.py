@@ -785,12 +785,15 @@ class TestSOLAOperator3DWithPathFunctionals:
         npt.assert_allclose(xp(f), expected, rtol=1e-6, atol=1e-6)
 
     def test_adjoint_path_functionals_raises_clear_error(self, unit_box, space):
-        """Adjoint with two path-integral forms on a Lebesgue3D raises TypeError
-        with a helpful message pointing to Phase 5 / Sobolev3D representers.
+        """Adjoint with two path-integral forms on a plain Lebesgue3D raises
+        TypeError with a helpful message pointing to Sobolev3D representers.
 
         Uses two path forms (n>1) so the dual returns a SumLinearForm rather
         than a single PathIntegralFunctional — confirming the adjoint error
         fires for both the single and multi-form path cases.
+        Phase 5 implements the representer when domain is Sobolev3D; a plain
+        Lebesgue3D domain still raises because Lebesgue3D.from_dual only
+        handles VolumeKernel3D.
         """
         from pygeoinf3d.spaces.forms import PathIntegralFunctional
         from pygeoinf3d.core.paths import Path3D
@@ -808,7 +811,7 @@ class TestSOLAOperator3DWithPathFunctionals:
         op = SOLAOperator3D(space, codomain, [form_a, form_b])
 
         y = np.array([1.0, 1.0])
-        with pytest.raises(TypeError, match="Phase 5"):
+        with pytest.raises(TypeError, match="Sobolev3D"):
             op.adjoint(y)
 
     def test_mixed_form_types_accepted(self, unit_box, space):

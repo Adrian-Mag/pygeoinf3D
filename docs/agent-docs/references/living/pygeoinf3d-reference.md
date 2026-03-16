@@ -1,8 +1,8 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are complete and archived. **`Sobolev3D` Phase 1 is complete** inside the active continuous path-integral Sobolev inversion plan. **`Path3D` Phase 2 is complete** (callable, polyline, and point-sample constructors; normalized arc-length parameterization; 25 tests). **`PathIntegralFunctional` Phase 3 is complete** (path-integral linear form; composite trapezoidal quadrature; scalar algebra; domain/type validation; 30 tests). **`SOLAOperator3D` Phase 4 + Phase 4 Revision is complete** (generalized to accept any `LinearForm` subclass — `VolumeKernel3D` or `PathIntegralFunctional` — including mixed stacks; dual returns `SumLinearForm` for multi-path and mixed stacks; adjoint error for unsupported forms on plain `Lebesgue3D`; 6+9 tests). **`SumLinearForm` is complete** (weighted sum composite form; basis-free evaluation; 9 tests). `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula; `Sobolev3D` is a first-class Hilbert space wrapping `Lebesgue3D` + a weight operator. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the remaining active architecture track. A full 6-notebook demo suite is committed.
+> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are complete and archived. **`Sobolev3D` Phase 1 is complete** inside the active continuous path-integral Sobolev inversion plan. **`Path3D` Phase 2 is complete** (callable, polyline, and point-sample constructors; normalized arc-length parameterization; 25 tests). **`PathIntegralFunctional` Phase 3 is complete** (path-integral linear form; composite trapezoidal quadrature; scalar algebra; domain/type validation; 30 tests). **`SOLAOperator3D` Phase 4 + Phase 4 Revision is complete** (generalized to accept any `LinearForm` subclass — `VolumeKernel3D` or `PathIntegralFunctional` — including mixed stacks; dual returns `SumLinearForm` for multi-path and mixed stacks; adjoint error for unsupported forms on plain `Lebesgue3D`; 6+9 tests). **`SumLinearForm` is complete** (weighted sum composite form; basis-free evaluation; 9 tests). **`Sobolev3D.from_dual` Phase 5 is complete** (spectral representer formula for general `LinearForm`; recursive `SumLinearForm` branch; 8 new tests; `SOLAOperator3D` accepts `Sobolev3D` domain; end-to-end `path_integral_minimum_norm_demo.py`). The entire continuous path-integral Sobolev inversion plan is now complete. `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula; `Sobolev3D` is a first-class Hilbert space wrapping `Lebesgue3D` + a weight operator. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the remaining active architecture track. A full 6-notebook demo suite is committed.
 >
-> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5); `continuous-path-integral-sobolev-inversion-plan.md` (phase 5 only).
+> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5). The `continuous-path-integral-sobolev-inversion-plan.md` is now complete and archived.
 >
 > **Last updated:** 2026-03-16
 
@@ -13,7 +13,7 @@
 | Plan | Status |
 |------|--------|
 | `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` | **Active** — phases 3–5 in progress |
-| `continuous-path-integral-sobolev-inversion-plan.md` | **Active** — Phases 1–4 complete; phase 5 pending |
+| `continuous-path-integral-sobolev-inversion-plan.md` | **Complete** — all 5 phases done; archived to `completed-plans/` |
 | `bessel-sobolev-box-plan.md` | **Complete** — archived to `completed-plans/` |
 
 All other plans (foundation, SOLA, volumetric-kernel-providers, least-norm demo, synced-slice comparison, KL fast-path plot, InverseBoxLaplacian, SpectralOperator3D KL sampler, GeneralizedBoxLaplacian all 5 phases, plan-reference-cleanup, interactive-slice-slider) have been moved to `completed-plans/`.
@@ -127,7 +127,8 @@ pygeoinf3D/
 │   ├── pli_3d_demo.ipynb                         # End-to-end Bayesian PLI (prior-linked inversion) workflow
 │   ├── least_norm_inversion_demo.ipynb           # Noiseless minimum-norm inversion with SOLAOperator3D
 │   ├── kl_sampler_prior_demo.ipynb               # KL samples from InverseBoxLaplacian prior (spectral-kl plan)
-│   └── generalized_laplacian_covariance_demo.ipynb  # KL samples from (-αΔ)^s covariance, s<0
+│   ├── generalized_laplacian_covariance_demo.ipynb  # KL samples from (-αΔ)^s covariance, s<0
+│   └── path_integral_minimum_norm_demo.py        # End-to-end path-integral minimum-norm inversion (Phase 5)
 ├── pygeoinf3d/
 │   ├── __init__.py          # Re-exports all public API
 │   ├── plot.py              # Visualization (static slices + Plotly sliders + volume/isosurface helpers)
@@ -143,7 +144,7 @@ pygeoinf3D/
 │   │   ├── __init__.py      # Re-exports Lebesgue3D, VolumeKernel3D, PathIntegralFunctional, SumLinearForm, Sobolev3D
 │   │   ├── forms.py         # VolumeKernel3D, PathIntegralFunctional, SumLinearForm  ← Phase 2 / Sobolev-inversion Phase 3+4R
 │   │   ├── lebesgue.py      # Lebesgue3D  ← Phase 2, updated Phase 4
-│   │   └── sobolev.py       # Sobolev3D  ← Sobolev-inversion Phase 1
+│   │   └── sobolev.py       # Sobolev3D  ← Sobolev-inversion Phase 1+5 (Phase 5: 3-branch from_dual with spectral representer)
 │   ├── geometries/
 │   │   ├── __init__.py
 │   │   └── box/
@@ -166,7 +167,7 @@ pygeoinf3D/
 │   │   ├── inverse_laplacian_box.py  # InverseBoxLaplacian  ← pseudoinverse mode delegates to GeneralizedBoxLaplacian(power=-1); shift/strict use own apply — Phase 3
 │   │   ├── generalized_box_laplacian.py  # GeneralizedBoxLaplacian (full impl, inherits SpectralPowerBase3D)  ← generalized-box-laplacian Phases 1–2
 │   │   ├── bessel_sobolev_box.py  # BesselSobolevBox (shifted spectral weights with real order)  ← bessel-sobolev-box-plan
-│   │   └── sola.py            # SOLAOperator3D  ← SOLA Phase 1+2+3+4+4R (Phase 4R: SumLinearForm dual, mixed-type acceptance)
+│   │   └── sola.py            # SOLAOperator3D  ← SOLA Phase 1+2+3+4+4R+5 (Phase 5: accepts Sobolev3D domain; _lebesgue_domain routing)
 │   ├── sampling/              # KL expansion sampler  ← spectral-kl plan
 │   │   ├── __init__.py        # Re-exports KLSampler3D
 │   │   └── kl_sampler.py      # KLSampler3D
@@ -189,7 +190,7 @@ pygeoinf3D/
 │   ├── spaces/
 │   │   ├── __init__.py
 │   │   ├── test_lebesgue.py          ← Phase 2, extended Phase 4
-│   │   ├── test_sobolev.py           ← Sobolev-inversion Phase 1 revised (40 tests)
+│   │   ├── test_sobolev.py           ← Sobolev-inversion Phase 1+5 (48 tests: 40 original + 8 spectral representer)
 │   │   └── test_path_integral_functional.py  ← Sobolev-inversion Phase 3 (25 tests)
 │   ├── geometries/
 │   │   ├── __init__.py
@@ -637,7 +638,7 @@ only the primal ↔ dual Riesz correspondence for function-space elements.
 Future PDE or FEM weight operators can be swapped in without any changes to
 `Sobolev3D` itself.
 
-**Tests:** `tests/spaces/test_sobolev.py` — 40 tests covering construction,
+**Tests:** `tests/spaces/test_sobolev.py` — 48 tests covering construction,
 validation (including `TypeError` for non-operator-like weight/inverse_weight,
 and `inverse_weight.codomain` mismatch), `to_dual`, `from_dual` round-trip,
 direct Riesz consistency (`to_dual(f)(g) == inner_product(f, g)`), norm

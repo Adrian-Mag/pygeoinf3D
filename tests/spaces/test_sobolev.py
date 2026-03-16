@@ -578,3 +578,170 @@ class TestSobolev3DBesselSobolevBoxCompatibility:
         )
         ip = sob.inner_product(f, f)
         assert ip > 0.0
+
+
+# ---------------------------------------------------------------------------
+# TestSobolev3DFromDualSpectral
+# ---------------------------------------------------------------------------
+
+class TestSobolev3DFromDualSpectral:
+    """from_dual handles PathIntegralFunctional and SumLinearForm via
+    spectral representer.
+    """
+
+    @pytest.fixture
+    def sobolev_bessel(self):
+        from pygeoinf3d.geometries.box.domain import BoxDomain
+        from pygeoinf3d.providers.tensor_product import TensorProductProvider
+        from pygeoinf3d.operators.bessel_sobolev_box import BesselSobolevBox
+
+        box = BoxDomain(np.zeros(3), np.ones(3))
+        space = Lebesgue3D(box)
+        provider = TensorProductProvider(box, truncation=(5, 5, 5), bc_type="neumann")
+        w = BesselSobolevBox(space, provider, shift=1.0, order=4.0)
+        w_inv = BesselSobolevBox(space, provider, shift=1.0, order=-4.0)
+        return Sobolev3D(space, w, w_inv)
+
+    @pytest.fixture
+    def path_across_box(self):
+        from pygeoinf3d.core.paths import Path3D
+        start = np.array([0.1, 0.5, 0.5])
+        end = np.array([0.9, 0.5, 0.5])
+        return Path3D.from_polyline(np.array([start, end]))
+
+    @pytest.fixture
+    def path_diagonal(self):
+        from pygeoinf3d.core.paths import Path3D
+        return Path3D.from_polyline(
+            np.array([[0.1, 0.1, 0.1], [0.9, 0.9, 0.9]])
+        )
+
+    def test_from_dual_path_integral_returns_function3d(
+        self, sobolev_bessel, path_across_box
+    ):
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+
+        form = PathIntegralFunctional(
+            sobolev_bessel.base_space, path_across_box, n_quad=50
+        )
+        r = sobolev_bessel.from_dual(form)
+        assert isinstance(r, Function3D)
+
+    def test_from_dual_path_integral_representer_identity(
+        self, sobolev_bessel, path_across_box
+    ):
+        """ℓ_γ(r_γ) ≈ ‖r_γ‖_H² (representer identity)."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+
+        form = PathIntegralFunctional(
+            sobolev_bessel.base_space, path_across_box, n_quad=50
+        )
+        r = sobolev_bessel.from_dual(form)
+        lhs = float(form(r))
+        rhs = sobolev_bessel.inner_product(r, r)
+        npt.assert_allclose(lhs, rhs, rtol=0.10)
+
+    def test_from_dual_path_integral_representer_theorem(
+        self, sobolev_bessel, path_across_box
+    ):
+        """<r_γ, φ_0>_H ≈ ℓ_γ(φ_0) (representer theorem on eigenfunction)."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+
+        form = PathIntegralFunctional(
+            sobolev_bessel.base_space, path_across_box, n_quad=50
+        )
+        r = sobolev_bessel.from_dual(form)
+        inv_w = sobolev_bessel.inverse_weight
+        phi0 = inv_w.get_eigenfunction(0)
+        lhs = sobolev_bessel.inner_product(r, phi0)
+        rhs = float(form(phi0))
+        npt.assert_allclose(lhs, rhs, rtol=0.01)
+
+    def test_from_dual_sum_linear_form_returns_function3d(
+        self, sobolev_bessel, path_across_box, path_diagonal
+    ):
+        """from_dual(SumLinearForm) returns a Function3D."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional, SumLinearForm
+
+        f1 = PathIntegralFunctional(
+            sobolev_bessel.base_space, path_across_box, n_quad=50
+        )
+        f2 = PathIntegralFunctional(
+            sobolev_bessel.base_space, path_diagonal, n_quad=50
+        )
+        sum_form = SumLinearForm(sobolev_bessel.base_space, [(1.0, f1), (1.0, f2)])
+        r = sobolev_bessel.from_dual(sum_form)
+        assert isinstance(r, Function3D)
+
+    def test_from_dual_sum_linear_form_representer_identity(
+        self, sobolev_bessel, path_across_box, path_diagonal
+    ):
+        """ℓ_sum(r_sum) ≈ ‖r_sum‖_H²."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional, SumLinearForm
+
+        f1 = PathIntegralFunctional(
+            sobolev_bessel.base_space, path_across_box, n_quad=50
+        )
+        f2 = PathIntegralFunctional(
+            sobolev_bessel.base_space, path_diagonal, n_quad=50
+        )
+        sum_form = SumLinearForm(
+            sobolev_bessel.base_space, [(0.5, f1), (0.5, f2)]
+        )
+        r = sobolev_bessel.from_dual(sum_form)
+        lhs = float(sum_form(r))
+        rhs = sobolev_bessel.inner_product(r, r)
+        npt.assert_allclose(lhs, rhs, rtol=0.15)
+
+    def test_from_dual_non_spectral_inverse_weight_raises(self, path_across_box):
+        """Raises TypeError if inverse_weight is not a SpectralOperator3D."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+        from pygeoinf3d.geometries.box.domain import BoxDomain
+        from pygeoinf.linear_operators import LinearOperator
+
+        box = BoxDomain(np.zeros(3), np.ones(3))
+        space = Lebesgue3D(box)
+        W = LinearOperator(
+            space, space, lambda f: f, adjoint_mapping=lambda f: f
+        )
+        sob = Sobolev3D(space, W, W)
+        form = PathIntegralFunctional(space, path_across_box, n_quad=20)
+        with pytest.raises(TypeError, match="SpectralOperator3D"):
+            sob.from_dual(form)
+
+    def test_sola_adjoint_with_sobolev_domain(
+        self, sobolev_bessel, path_across_box, path_diagonal
+    ):
+        """SOLAOperator3D.adjoint works when domain is Sobolev3D."""
+        from pygeoinf import EuclideanSpace
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+        from pygeoinf3d.operators.sola import SOLAOperator3D
+
+        f1 = PathIntegralFunctional(
+            sobolev_bessel.base_space, path_across_box, n_quad=50
+        )
+        f2 = PathIntegralFunctional(
+            sobolev_bessel.base_space, path_diagonal, n_quad=50
+        )
+        op = SOLAOperator3D(sobolev_bessel, EuclideanSpace(2), [f1, f2])
+        y = np.array([1.0, 0.5])
+        adj_y = op.adjoint(y)
+        assert isinstance(adj_y, Function3D)
+
+    def test_sola_adjoint_consistency(self, sobolev_bessel, path_across_box):
+        """<G*y, f>_H ≈ <y, Gf>_{R^n} (adjoint consistency check)."""
+        from pygeoinf import EuclideanSpace
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+        from pygeoinf3d.operators.sola import SOLAOperator3D
+
+        form = PathIntegralFunctional(
+            sobolev_bessel.base_space, path_across_box, n_quad=50
+        )
+        op = SOLAOperator3D(sobolev_bessel, EuclideanSpace(1), [form])
+        phi0 = sobolev_bessel.inverse_weight.get_eigenfunction(0)
+        y = np.array([1.0])
+        Gf = op(phi0)
+        Gstar_y = op.adjoint(y)
+        lhs = sobolev_bessel.inner_product(Gstar_y, phi0)
+        rhs = float(np.dot(y, Gf))
+        npt.assert_allclose(lhs, rhs, rtol=0.05)

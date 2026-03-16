@@ -17,7 +17,7 @@ $V$ and an $m$-dimensional codomain $W$, the operator is
 Supported form types are
 :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D` (volume integrals) and
 :class:`~pygeoinf3d.spaces.forms.PathIntegralFunctional` (path integrals).
-All forms in a single operator must be the same concrete type.
+Mixed stacks (different concrete types in the same operator) are accepted.
 
 Dual mapping
 ------------
@@ -162,13 +162,22 @@ class SOLAOperator3D(LinearOperator):
 
     def __init__(
         self,
-        domain: Lebesgue3D,
+        domain,
         codomain,
         kernels: Union[Sequence[LinearForm], KernelProvider3D],
     ) -> None:
-        if not isinstance(domain, Lebesgue3D):
+        # Accept both Lebesgue3D (original) and Sobolev3D (Phase 5+) domains.
+        # For Sobolev3D, forms are defined on the underlying Lebesgue3D base_space.
+        if isinstance(domain, Lebesgue3D):
+            self._lebesgue_domain: Lebesgue3D = domain
+        elif (
+            hasattr(domain, "base_space")
+            and isinstance(getattr(domain, "base_space", None), Lebesgue3D)
+        ):
+            self._lebesgue_domain = domain.base_space
+        else:
             raise TypeError(
-                f"SOLAOperator3D requires a Lebesgue3D domain, "
+                f"SOLAOperator3D requires a Lebesgue3D or Sobolev3D domain, "
                 f"got {type(domain).__name__!r}."
             )
 
@@ -208,12 +217,13 @@ class SOLAOperator3D(LinearOperator):
                         f"PathIntegralFunctional (LinearForm subclass); "
                         f"got {type(kernel).__name__!r}."
                     )
-                if kernel.domain is not domain:
+                if kernel.domain is not self._lebesgue_domain:
                     raise ValueError(
                         f"kernels[{i}].domain is not the same Lebesgue3D "
                         "instance as the operator domain (identity check).  "
                         "Build each kernel form with the exact same "
-                        "Lebesgue3D object passed as 'domain' here."
+                        "Lebesgue3D object (or Sobolev3D.base_space) "
+                        "passed as 'domain' here."
                     )
             self._provider = None
             self._kernels = kernels_list
@@ -295,7 +305,8 @@ class SOLAOperator3D(LinearOperator):
           :meth:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D.from_dual`).
         * **Otherwise (mixed types or path stacks with n>1):** a
           :class:`~pygeoinf3d.spaces.forms.SumLinearForm` wrapping the
-          weighted terms.  Phase 5 requirer logic handles this type.
+          weighted terms, consumed by
+          :meth:`~pygeoinf3d.spaces.sobolev.Sobolev3D.from_dual`.
 
         Args:
             yp: An element of the codomain dual space (a
@@ -317,11 +328,11 @@ class SOLAOperator3D(LinearOperator):
             for i in range(1, self._n_kernels):
                 result = result + float(c[i]) * self._get_kernel(i)
             return result
-        # General case: wrap in SumLinearForm
+        # General case: wrap in SumLinearForm (always on the Lebesgue3D layer)
         from pygeoinf3d.spaces.forms import SumLinearForm
         terms = [(float(c[i]), self._get_kernel(i))
                  for i in range(self._n_kernels)]
-        return SumLinearForm(self.domain, terms)
+        return SumLinearForm(self._lebesgue_domain, terms)
 
     def _adjoint_mapping(self, y):
         """Adjoint map $A^\\dagger: W \\to V$.
@@ -363,8 +374,8 @@ class SOLAOperator3D(LinearOperator):
                 "When path-integral forms are used, the adjoint requires a "
                 "Sobolev3D domain that provides path-integral representers "
                 "(not a plain Lebesgue3D).  "
-                "Set domain to a Sobolev3D instance or omit the adjoint call. "
-                "Phase 5 will add Sobolev3D representer support."
+                "Set domain to a Sobolev3D instance with a SpectralOperator3D "
+                "weight (e.g. BesselSobolevBox) to enable adjoint evaluation."
             ) from None
 
     # ------------------------------------------------------------------

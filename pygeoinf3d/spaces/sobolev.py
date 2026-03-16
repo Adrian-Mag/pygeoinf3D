@@ -253,18 +253,36 @@ class Sobolev3D(HilbertSpace):
     def from_dual(self, fp: Any) -> Function3D:
         r"""Recover a primal function from a dual element.
 
-        Accepts a :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D` on
-        *base_space* and returns :math:`W^{-1}(\text{fp.kernel})`.
+        Three resolution paths are supported:
 
-        This is consistent with :meth:`to_dual`:
-        ``from_dual(to_dual(f)) = W⁻¹(W·f) = f``.
+        **Branch 1 — VolumeKernel3D** (round-trip from :meth:`to_dual`):
+            Returns :math:`W^{-1}(\text{fp.kernel})`.
+
+        **Branch 2 — SumLinearForm** (recursive):
+            Applies :meth:`from_dual` to each term and accumulates the
+            weighted sum of representers.
+
+        **Branch 3 — General LinearForm** (spectral representer formula):
+            Requires *inverse_weight* to be a
+            :class:`~pygeoinf3d.operators.base.SpectralOperator3D`.
+            Computes the representer
+
+            .. math::
+
+                r_\ell(\mathbf{x}) = \sum_{k=0}^{N-1}
+                    \ell(\Phi_k) \cdot \nu_k \cdot \Phi_k(\mathbf{x}),
+
+            where :math:`\Phi_k` are the eigenfunctions of *inverse_weight*
+            and :math:`\nu_k = W^{-1}_k` are the corresponding eigenvalues.
 
         Parameters
         ----------
         fp:
-            A :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D` produced by
-            :meth:`to_dual` (or any other :class:`VolumeKernel3D` on
-            *base_space*).
+            A dual element: :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D`,
+            :class:`~pygeoinf3d.spaces.forms.SumLinearForm`, or any
+            :class:`~pygeoinf.LinearForm` on *base_space* (requires
+            *inverse_weight* to be a
+            :class:`~pygeoinf3d.operators.base.SpectralOperator3D`).
 
         Returns
         -------
@@ -274,23 +292,82 @@ class Sobolev3D(HilbertSpace):
         Raises
         ------
         TypeError
-            If *fp* is not a :class:`VolumeKernel3D`.
+            If *fp* is not one of the supported form types, or if
+            *inverse_weight* is not a ``SpectralOperator3D`` when needed.
         ValueError
-            If *fp* was produced by a different :class:`Lebesgue3D` instance
-            (i.e. ``fp.domain is not self.base_space``).
+            If *fp* was produced by a different :class:`Lebesgue3D` instance.
         """
-        if not isinstance(fp, VolumeKernel3D):
-            raise TypeError(
-                f"Sobolev3D.from_dual requires a VolumeKernel3D; "
-                f"got {type(fp).__name__!r}."
+        # ── Branch 1: VolumeKernel3D ────────────────────────────────────────
+        if isinstance(fp, VolumeKernel3D):
+            if fp.domain is not self._base_space:
+                raise ValueError(
+                    "Sobolev3D.from_dual: the VolumeKernel3D was produced by a "
+                    "different Lebesgue3D instance than this Sobolev3D's "
+                    "base_space.  Dual elements cannot cross space boundaries."
+                )
+            return self._inverse_weight(fp.kernel)
+
+        # ── Branch 2: SumLinearForm (recursive) ─────────────────────────────
+        from pygeoinf3d.spaces.forms import SumLinearForm  # avoid top-level circular
+        if isinstance(fp, SumLinearForm):
+            if fp.domain is not self._base_space:
+                raise ValueError(
+                    "Sobolev3D.from_dual: the SumLinearForm was constructed on "
+                    "a different Lebesgue3D instance than this Sobolev3D's "
+                    "base_space.  Dual elements cannot cross space boundaries."
+                )
+            result = self._base_space.zero
+            for c_i, form_i in fp.terms:
+                r_i = self.from_dual(form_i)
+                result = self._base_space.add(
+                    result, self._base_space.multiply(float(c_i), r_i)
+                )
+            return result
+
+        # ── Branch 3: General LinearForm (spectral representer) ─────────────
+        from pygeoinf import LinearForm as _LinearForm
+        if isinstance(fp, _LinearForm):
+            if fp.domain is not self._base_space:
+                raise ValueError(
+                    "Sobolev3D.from_dual: the LinearForm was constructed on "
+                    "a different Lebesgue3D instance than this Sobolev3D's "
+                    "base_space.  Dual elements cannot cross space boundaries."
+                )
+            from pygeoinf3d.operators.base import SpectralOperator3D
+            if not isinstance(self._inverse_weight, SpectralOperator3D):
+                raise TypeError(
+                    "Sobolev3D.from_dual for non-VolumeKernel3D forms requires "
+                    "inverse_weight to be a SpectralOperator3D "
+                    "(e.g. BesselSobolevBox); "
+                    f"got {type(self._inverse_weight).__name__!r}."
+                )
+            inv_w = self._inverse_weight
+            n = inv_w.n_modes
+            # Evaluate ℓ on each eigenfunction — captured eagerly to avoid
+            # late-binding bugs in the closure below.
+            coeffs = [float(fp(inv_w.get_eigenfunction(k))) for k in range(n)]
+            nus = [float(inv_w.get_eigenvalue(k)) for k in range(n)]
+            phis = [inv_w.get_eigenfunction(k) for k in range(n)]
+
+            def evaluate(x, _c=coeffs, _nu=nus, _phi=phis):
+                x = np.asarray(x, dtype=float)
+                is_single = x.ndim == 1
+                pts = x[None, :] if is_single else x
+                total = np.zeros(len(pts))
+                for ck, nuk, phik in zip(_c, _nu, _phi):
+                    total = total + ck * nuk * np.asarray(phik(pts), dtype=float)
+                return float(total[0]) if is_single else total
+
+            return Function3D(
+                self._base_space.function_domain, evaluate_callable=evaluate
             )
-        if fp.domain is not self._base_space:
-            raise ValueError(
-                "Sobolev3D.from_dual: the VolumeKernel3D was produced by a "
-                "different Lebesgue3D instance than this Sobolev3D's "
-                "base_space.  Dual elements cannot cross space boundaries."
-            )
-        return self._inverse_weight(fp.kernel)
+
+        # ── Fallback: unsupported type ───────────────────────────────────────
+        raise TypeError(
+            f"Sobolev3D.from_dual requires a VolumeKernel3D, SumLinearForm, "
+            f"or LinearForm (backed by a SpectralOperator3D inverse_weight); "
+            f"got {type(fp).__name__!r}."
+        )
 
     def to_components(self, f: Function3D) -> np.ndarray:
         """Not implemented — :class:`Sobolev3D` is basis-free."""
