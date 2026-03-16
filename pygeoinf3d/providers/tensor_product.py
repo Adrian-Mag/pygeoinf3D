@@ -41,6 +41,7 @@ Modes are ordered by increasing eigenvalue with lexicographic tie-break.
 
 from __future__ import annotations
 
+import functools
 from typing import Callable, Dict, List, Tuple, Union
 
 import numpy as np
@@ -307,6 +308,7 @@ class TensorProductProvider:
             )
         return self._sorted_eigenvalues[index]
 
+    @functools.lru_cache(maxsize=None)
     def get_eigenfunction(self, index: int) -> "Function3D":
         """Return the *index*-th normalised 3-D eigenfunction.
 
@@ -316,6 +318,11 @@ class TensorProductProvider:
 
         The returned ``Function3D`` accepts both a single point ``(3,)`` and a
         batch ``(n, 3)`` and returns a scalar or ``(n,)`` array respectively.
+
+        Results are cached per provider instance — repeated calls with the
+        same *index* return the same ``Function3D`` object, so multiple
+        operators sharing this provider (e.g. several ``BesselSobolevBox``
+        with different orders) only allocate each eigenfunction once.
 
         Args:
             index: Flat index in ``range(dim)``.

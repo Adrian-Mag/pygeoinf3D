@@ -1,8 +1,8 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are **complete and archived**. `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula and is the building block for a future `Sobolev3D` wrapper. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the one remaining active track. A full 6-notebook demo suite (`1_box_domain`, `2_functions`, `3_lebesgue_space`, `3.1_kernel_functionals`, `4_providers`, `6_laplacian`) is now complete and committed.
+> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are complete and archived. **`Sobolev3D` Phase 1 is complete** inside the active continuous path-integral Sobolev inversion plan. `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula; `Sobolev3D` is a first-class Hilbert space wrapping `Lebesgue3D` + a weight operator. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the remaining active architecture track. A full 6-notebook demo suite is committed.
 >
-> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5 — backend integration, operator wiring, end-to-end demos).
+> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5); `continuous-path-integral-sobolev-inversion-plan.md` (phases 2–5).
 >
 > **Last updated:** 2026-03-16
 
@@ -13,6 +13,7 @@
 | Plan | Status |
 |------|--------|
 | `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` | **Active** — phases 3–5 in progress |
+| `continuous-path-integral-sobolev-inversion-plan.md` | **Active** — Phase 1 complete; phases 2–5 pending |
 | `bessel-sobolev-box-plan.md` | **Complete** — archived to `completed-plans/` |
 
 All other plans (foundation, SOLA, volumetric-kernel-providers, least-norm demo, synced-slice comparison, KL fast-path plot, InverseBoxLaplacian, SpectralOperator3D KL sampler, GeneralizedBoxLaplacian all 5 phases, plan-reference-cleanup, interactive-slice-slider) have been moved to `completed-plans/`.
@@ -119,6 +120,7 @@ pygeoinf3D/
 │   ├── 3.1_kernel_functionals_3d_demo.ipynb      # VolumeKernel3D, Riesz/to_dual map, SOLA-style kernel grid
 │   ├── 4_providers_3d_demo.ipynb                 # TensorProductProvider, GaussianProvider3D, BumpProvider3D, FunctionToKernelAdapter
 │   ├── 6_laplacian_3d_demo.ipynb                 # BoxLaplacian, InverseBoxLaplacian, GeneralizedBoxLaplacian, KLSampler3D
+│   ├── bessel_sobolev_3d_demo.ipynb              # BesselSobolevBox (s>0: smoothing, s<0: covariance), Neumann BCs
 │   ├── pli_3d_demo.ipynb                         # End-to-end Bayesian PLI (prior-linked inversion) workflow
 │   ├── least_norm_inversion_demo.ipynb           # Noiseless minimum-norm inversion with SOLAOperator3D
 │   ├── kl_sampler_prior_demo.ipynb               # KL samples from InverseBoxLaplacian prior (spectral-kl plan)
@@ -134,9 +136,10 @@ pygeoinf3D/
 │   │   ├── boundary.py      # Boundary3D
 │   │   └── functions.py     # Function3D  ← Phase 2
 │   ├── spaces/
-│   │   ├── __init__.py      # Re-exports Lebesgue3D, VolumeKernel3D
+│   │   ├── __init__.py      # Re-exports Lebesgue3D, VolumeKernel3D, Sobolev3D
 │   │   ├── forms.py         # VolumeKernel3D  ← Phase 2
-│   │   └── lebesgue.py      # Lebesgue3D  ← Phase 2, updated Phase 4
+│   │   ├── lebesgue.py      # Lebesgue3D  ← Phase 2, updated Phase 4
+│   │   └── sobolev.py       # Sobolev3D  ← Sobolev-inversion Phase 1
 │   ├── geometries/
 │   │   ├── __init__.py
 │   │   └── box/
@@ -180,7 +183,8 @@ pygeoinf3D/
 │   │   └── test_functions.py         ← Phase 2
 │   ├── spaces/
 │   │   ├── __init__.py
-│   │   └── test_lebesgue.py          ← Phase 2, extended Phase 4
+│   │   ├── test_lebesgue.py          ← Phase 2, extended Phase 4
+│   │   └── test_sobolev.py           ← Sobolev-inversion Phase 1 revised (40 tests)
 │   ├── geometries/
 │   │   ├── __init__.py
 │   │   └── test_box_domain.py        ← Phase 3
@@ -476,6 +480,71 @@ parent's `_components` array, which is a fake `np.zeros(0)` placeholder in
 `VolumeKernel3D`.  These are overridden to mutate `self._kernel` instead.
 `__isub__` is also overridden for consistency (Python's default fallback to
 `__sub__` would silently rebind rather than mutate).
+
+---
+
+### `Sobolev3D` — `pygeoinf3d.spaces.sobolev`
+
+A first-class weighted Sobolev Hilbert space on a `Domain3D`.
+Inherits from `pygeoinf.HilbertSpace`.
+
+```python
+Sobolev3D(
+    base_space: Lebesgue3D,
+    weight: LinearOperator,       # W : base_space → base_space
+    inverse_weight: LinearOperator,  # W⁻¹ : base_space → base_space
+)
+```
+
+Inner product:
+
+$$\langle f,\, g \rangle_H = \langle Wf,\, g \rangle_{L^2} = \int_\Omega (Wf)(x)\, g(x)\,\mathrm{d}V$$
+
+| Member | Description |
+|--------|-------------|
+| `.base_space` | The underlying `Lebesgue3D` space |
+| `.function_domain` | Delegates to `base_space.function_domain` |
+| `.weight` | The weight operator *W* : *base_space* → *base_space* |
+| `.inverse_weight` | The inverse weight operator *W*⁻¹ : *base_space* → *base_space* |
+| `.dim` → `0` | Always basis-free |
+| `.to_dual(f)` | Returns `VolumeKernel3D(base_space, W·f)`, evaluating `g ↦ ∫(Wf)·g dV` |
+| `.from_dual(fp)` | Applies `W⁻¹` to `fp.kernel`; accepts only `VolumeKernel3D` on `base_space` |
+| `.inner_product(f, g)` | `base_space.inner_product(W·f, g)` — weighted L² integral |
+| `.norm(f)` | `√⟨f,f⟩_H` |
+| `.zero` | Delegates to `base_space.zero` |
+| `.add/.subtract/.multiply/.negative` | Delegate to `base_space` |
+| `==` | True iff `base_space ==`, `weight is`, `inverse_weight is` the same objects |
+
+**Constructor validation:**
+- Raises `TypeError` if `base_space` is not `Lebesgue3D`.
+- Raises `TypeError` if `weight` or `inverse_weight` do not have `.domain` and `.codomain`
+  attributes (i.e. are not operator-like objects). Positivity and self-adjointness are
+  caller contracts, not verified by the constructor.
+- Raises `ValueError` if `weight.domain != base_space`, `weight.codomain != base_space`,
+  `inverse_weight.domain != base_space`, or `inverse_weight.codomain != base_space`.
+
+**Round-trip identity:**
+`from_dual(to_dual(f))` = `W⁻¹(W·f)` = `f`, provided `inverse_weight` is a true
+left-inverse of `weight`.
+
+**`to_dual` contract for Phase 3 path integrals:**
+Phase 3 path-integral **dual functionals** will not be produced by `to_dual`.
+They will be constructed directly as dual objects and will call `from_dual` to
+compute their Sobolev representers.  The `to_dual` / `from_dual` pair here handles
+only the primal ↔ dual Riesz correspondence for function-space elements.
+
+**Intended weight back-end:**
+`BesselSobolevBox(space, provider, shift=s0, order=s)` as `weight` with
+`BesselSobolevBox(space, provider, shift=s0, order=-s)` as `inverse_weight`.
+Future PDE or FEM weight operators can be swapped in without any changes to
+`Sobolev3D` itself.
+
+**Tests:** `tests/spaces/test_sobolev.py` — 40 tests covering construction,
+validation (including `TypeError` for non-operator-like weight/inverse_weight,
+and `inverse_weight.codomain` mismatch), `to_dual`, `from_dual` round-trip,
+direct Riesz consistency (`to_dual(f)(g) == inner_product(f, g)`), norm
+consistency (`norm(f)**2 == inner_product(f, f)`), inner product, zero/arithmetic,
+equality, `NotImplementedError` for components, `BesselSobolevBox` compatibility.
 
 ---
 
@@ -1282,10 +1351,11 @@ BesselSobolevBox(
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `space` | `Lebesgue3D` | Function space and operator domain/codomain |
-| `provider` | `TensorProductProvider` | Eigenfunction/eigenvalue source; box must match `space.function_domain` |
+| `provider` | spectral-basis provider | Must expose `dim`, `get_eigenvalue(i)`, `get_eigenfunction(i)`; inferred domain must match `space.function_domain` |
 | `shift` | `float` | Strictly positive shift added to each Laplacian eigenvalue before exponentiation; must satisfy `shift > 0` |
 | `order` | `float` | Real exponent $s$; any real float including non-integer and negative values |
 | `quad_resolution` | `int` (default `20`) | Resolution for `BoxDomain.structured_mesh` used in $L^2$ projection |
+| `quad_location` | `str` (default `'cell_centers'`) | Forwarded to `structured_mesh`/`volume_weights`; tensor-product fast path only activates for `'cell_centers'` |
 
 **Eigenvalue formula:**
 $$\mu_k = (\mathrm{shift} + \lambda_k)^{s/2}$$
@@ -1304,6 +1374,9 @@ where $\lambda_k$ are the Laplacian eigenvalues from `provider` and $s$ = `order
 3. Return `Function3D` evaluating `Σ_k μ_k c_k Φ_k(x)` via closure.
 
 Quadrature mesh/weights and all eigenfunction callables are pre-computed at construction.
+If `provider` is a `TensorProductProvider` and `quad_location='cell_centers'`,
+the coefficient projection and synthesis steps use an internal tensor-product
+contraction fast path. Otherwise the generic quadrature loop is used.
 
 **Special-case equivalences:**
 
@@ -1316,7 +1389,7 @@ Quadrature mesh/weights and all eigenfunction callables are pre-computed at cons
 
 **Validation:**
 - `shift <= 0` → `ValueError` (must be strictly positive).
-- `provider._box is not space.function_domain` → `ValueError`.
+- inferred provider domain differs from `space.function_domain` → `ValueError`.
 - `shift` non-finite → `ValueError`.
 
 **Why `shift > 0` is required:** Requiring a strictly positive shift guarantees
@@ -1325,10 +1398,10 @@ $\lambda_0 = 0$. This avoids any singularity for negative `order`, eliminating t
 need for a special-case pseudoinverse projection that `GeneralizedBoxLaplacian` requires
 for negative `power`.
 
-**Future role (Sobolev wrapper):** `BesselSobolevBox` is the building block for a future
-`Sobolev3D` wrapper — a `HilbertSpace` whose inner-product norm is
-$\|(\mathrm{shift} - \Delta)^{s/2} f\|_{L^2}$. The Sobolev space can be constructed via
-`pygeoinf.OperatorWeightedHilbertSpace` wrapping this operator as the mass operator.
+**Role in Sobolev ladder:** `BesselSobolevBox` is the first weight back-end for
+the implemented `Sobolev3D` space. It realizes the norm
+$\|(\mathrm{shift} - \Delta)^{s/2} f\|_{L^2}$ spectrally on `BoxDomain`, while
+leaving room for future PDE or FEM back-ends without changing `Sobolev3D`.
 
 ```python
 import numpy as np
@@ -1604,7 +1677,6 @@ from pygeoinf3d import (
 | ~~Phase 4 docs~~ | ~~Canonical workflow, volumetric boundary statement, README refresh, test counts~~ **DONE** |
 | ~~GeneralizedBoxLaplacian~~ | ~~`SpectralPowerBase3D` + `GeneralizedBoxLaplacian` for $(-\alpha\Delta)^s$, all 5 phases including docs and archive~~ **DONE** |
 | ~~bessel-sobolev-box~~ | ~~`BesselSobolevBox` all 3 phases (shifted spectral weights, real order, docs/archive)~~ **DONE** |
-| next | `Sobolev3D` wrapper via `OperatorWeightedHilbertSpace` using `BesselSobolevBox` as mass operator |
 | 5 | `BallDomain` (StructuredDomain3D, spherical coordinates) |
 | 6 | Dual elements and geometric distributions (point/path/surface/volume) |
 | 7 | End-to-end inversion workflow demo |

@@ -53,6 +53,23 @@ def neumann_provider(unit_box):
     )
 
 
+class _WrappedSpectralProvider:
+    """Expose only the generic spectral interface of another provider."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    @property
+    def dim(self):
+        return self._inner.dim
+
+    def get_eigenvalue(self, i):
+        return self._inner.get_eigenvalue(i)
+
+    def get_eigenfunction(self, i):
+        return self._inner.get_eigenfunction(i)
+
+
 # ---------------------------------------------------------------------------
 # TestConstructorValidation
 # ---------------------------------------------------------------------------
@@ -84,6 +101,11 @@ class TestConstructorValidation:
 
     def test_construct_neumann_provider(self, space, neumann_provider):
         op = BesselSobolevBox(space, neumann_provider, shift=0.5, order=1.0)
+        assert op is not None
+
+    def test_construct_generic_wrapped_provider(self, space, dirichlet_provider):
+        wrapped = _WrappedSpectralProvider(dirichlet_provider)
+        op = BesselSobolevBox(space, wrapped, shift=1.0, order=1.0)
         assert op is not None
 
     def test_raises_shift_zero(self, space, dirichlet_provider):
@@ -438,6 +460,39 @@ class TestLadderSemantics:
         f_vals = np.asarray(f(pts), dtype=float)
         g_vals = np.asarray(g(pts), dtype=float)
         return float(np.dot(f_vals * g_vals, weights))
+
+    def test_wrapped_provider_matches_tensor_product_path(
+        self, space, dirichlet_provider
+    ):
+        wrapped = _WrappedSpectralProvider(dirichlet_provider)
+        op_fast = self._make_op(
+            space,
+            dirichlet_provider,
+            shift=1.0,
+            order=1.5,
+        )
+        op_generic = self._make_op(
+            space,
+            wrapped,
+            shift=1.0,
+            order=1.5,
+        )
+
+        phi0 = dirichlet_provider.get_eigenfunction(0)
+        phi1 = dirichlet_provider.get_eigenfunction(1)
+        f = phi0 + 0.25 * phi1
+
+        result_fast = op_fast(f)
+        result_generic = op_generic(f)
+
+        rng = np.random.default_rng(42)
+        pts = rng.uniform(0, 1, size=(50, 3))
+        npt.assert_allclose(
+            result_fast(pts),
+            result_generic(pts),
+            rtol=1e-10,
+            atol=1e-10,
+        )
 
     # -----------------------------------------------------------------------
     # Tests
