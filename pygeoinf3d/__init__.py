@@ -27,6 +27,7 @@ from .operators.spectral_power_base import SpectralPowerBase3D
 from .operators.laplacian_box import BoxLaplacian
 from .operators.inverse_laplacian_box import InverseBoxLaplacian
 from .operators.generalized_box_laplacian import GeneralizedBoxLaplacian
+from .operators.bessel_sobolev_box import BesselSobolevBox
 
 # SOLA operator — Phases 1-4: volume-kernel operator core, API locked
 from .operators.sola import SOLAOperator3D
@@ -67,6 +68,7 @@ __all__ = [
     "BoxLaplacian",
     "InverseBoxLaplacian",
     "GeneralizedBoxLaplacian",
+    "BesselSobolevBox",
     # SOLA operator — Phases 1-4
     "SOLAOperator3D",
     # Sampling

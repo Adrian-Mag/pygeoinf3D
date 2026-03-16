@@ -2,9 +2,9 @@
 
 > **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, and `GeneralizedBoxLaplacian` (all 5 phases including docs/archive) are **complete and archived**. `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the one remaining active track. A full 6-notebook demo suite (`1_box_domain`, `2_functions`, `3_lebesgue_space`, `3.1_kernel_functionals`, `4_providers`, `6_laplacian`) is now complete and committed.
 >
-> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5 — backend integration, operator wiring, end-to-end demos).
+> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5 — backend integration, operator wiring, end-to-end demos); `bessel-sobolev-box-plan.md` (active — implementation/testing track).
 >
-> **Last updated:** 2026-06-22
+> **Last updated:** 2026-03-16
 
 ---
 
@@ -13,6 +13,7 @@
 | Plan | Status |
 |------|--------|
 | `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` | **Active** — phases 3–5 in progress |
+| `bessel-sobolev-box-plan.md` | **Active** — operator implementation/testing in progress |
 
 All other plans (foundation, SOLA, volumetric-kernel-providers, least-norm demo, synced-slice comparison, KL fast-path plot, InverseBoxLaplacian, SpectralOperator3D KL sampler, GeneralizedBoxLaplacian all 5 phases, plan-reference-cleanup, interactive-slice-slider) have been moved to `completed-plans/`.
 
@@ -151,12 +152,13 @@ pygeoinf3D/
 │   │       ├── bump.py        # BumpProvider3D       ← kernel-providers Phase 2
 │   │       └── boxcar.py      # BoxcarProvider3D     ← kernel-providers Phase 2
 │   ├── operators/
-│   │   ├── __init__.py        # Re-exports SpectralOperator3D, SpectralPowerBase3D, BoxLaplacian, InverseBoxLaplacian, GeneralizedBoxLaplacian, SOLAOperator3D
+│   │   ├── __init__.py        # Re-exports SpectralOperator3D, SpectralPowerBase3D, BoxLaplacian, InverseBoxLaplacian, GeneralizedBoxLaplacian, BesselSobolevBox, SOLAOperator3D
 │   │   ├── base.py            # SpectralOperator3D (ABC)  ← spectral-kl plan
 │   │   ├── spectral_power_base.py  # SpectralPowerBase3D (abstract, ABC mixin)  ← generalized-box-laplacian Phase 2
 │   │   ├── laplacian_box.py   # BoxLaplacian  ← thin wrapper over GeneralizedBoxLaplacian (power=1, alpha=1) — Phase 3
 │   │   ├── inverse_laplacian_box.py  # InverseBoxLaplacian  ← pseudoinverse mode delegates to GeneralizedBoxLaplacian(power=-1); shift/strict use own apply — Phase 3
 │   │   ├── generalized_box_laplacian.py  # GeneralizedBoxLaplacian (full impl, inherits SpectralPowerBase3D)  ← generalized-box-laplacian Phases 1–2
+│   │   ├── bessel_sobolev_box.py  # BesselSobolevBox (shifted spectral weights with real order)  ← bessel-sobolev-box-plan
 │   │   └── sola.py            # SOLAOperator3D  ← SOLA Phase 1+2+3
 │   ├── sampling/              # KL expansion sampler  ← spectral-kl plan
 │   │   ├── __init__.py        # Re-exports KLSampler3D
@@ -192,6 +194,7 @@ pygeoinf3D/
 │   │   ├── test_box_laplacian.py          ← Phase 3 + spectral interface + GeneralizedBoxLaplacian equivalence (26 tests)
 │   │   ├── test_inverse_box_laplacian.py  ← InverseLaplacian plan + spectral interface (37 tests)
 │   │   ├── test_generalized_box_laplacian.py  ← GeneralizedBoxLaplacian plan Phases 1-4 (54 tests)
+│   │   ├── test_bessel_sobolev_box.py    ← bessel-sobolev-box-plan Phase 1 (31 tests)
 │   │   └── test_sola.py              ← SOLA Phase 1+2+3+4
 │   ├── sampling/
 │   │   ├── __init__.py
@@ -1487,6 +1490,7 @@ from pygeoinf3d import (
     InverseBoxLaplacian, # InverseLaplacian plan
     SpectralPowerBase3D, # GeneralizedBoxLaplacian plan
     GeneralizedBoxLaplacian, # GeneralizedBoxLaplacian plan
+    BesselSobolevBox,    # bessel-sobolev-box-plan
     KLSampler3D,         # spectral-kl plan
     SOLAOperator3D,      # SOLA Phase 1+2+3
     CoefficientRepresentation3D,  # Phase 4
@@ -1510,7 +1514,7 @@ from pygeoinf3d import (
 | ~~kernel-providers 2~~ | ~~`GaussianProvider3D`, `BumpProvider3D`, `BoxcarProvider3D` under `function_providers`~~ **DONE** |
 | ~~Phase 4 docs~~ | ~~Canonical workflow, volumetric boundary statement, README refresh, test counts~~ **DONE** |
 | ~~GeneralizedBoxLaplacian~~ | ~~`SpectralPowerBase3D` + `GeneralizedBoxLaplacian` for $(-\alpha\Delta)^s$, all 5 phases including docs and archive~~ **DONE** |
-| next | `Sobolev3D`, Bessel-Sobolev operators (shift–Laplacian $(-\alpha\Delta + \delta I)^s$), and trace-ready structure on BoxDomain |
+| next | `Sobolev3D`, Bessel-Sobolev Phase 2 (action + ladder semantics), then Phase 3 (docs) |
 | 5 | `BallDomain` (StructuredDomain3D, spherical coordinates) |
 | 6 | Dual elements and geometric distributions (point/path/surface/volume) |
 | 7 | End-to-end inversion workflow demo |
@@ -1524,7 +1528,7 @@ Run with:
 conda run -n inferences3 python -m pytest tests/ -q
 ```
 
-**622 tests passing** (foundation Phases 1-3 + coefficient architecture Phases 1-2 + SOLA Phases 1-4 + kernel-providers Phases 1-2 + plot + spectral operators + `GeneralizedBoxLaplacian` all 5 phases):
+**653 tests passing** (foundation Phases 1-3 + coefficient architecture Phases 1-2 + SOLA Phases 1-4 + kernel-providers Phases 1-2 + plot + spectral operators + `GeneralizedBoxLaplacian` all 5 phases):
 - `tests/core/test_config.py` — 13 tests
 - `tests/core/test_region.py` — 14 tests
 - `tests/core/test_domain_base.py` — 21 tests
@@ -1541,6 +1545,7 @@ conda run -n inferences3 python -m pytest tests/ -q
 - `tests/operators/test_sola.py` — 29 tests  ← SOLA Phases 1+2+3+4
 - `tests/operators/test_inverse_box_laplacian.py` — 37 tests  ← InverseLaplacian plan + spectral interface
 - `tests/operators/test_generalized_box_laplacian.py` — 54 tests  ← GeneralizedBoxLaplacian plan Phases 1-4
+- `tests/operators/test_bessel_sobolev_box.py` — 31 tests  ← bessel-sobolev-box-plan Phase 1
 - `tests/sampling/test_kl_sampler.py` — 47 tests  ← spectral-kl plan + GeneralizedBoxLaplacian integration
 - `tests/sampling/test_kl_generalized_integration.py` — 10 tests  ← generalized-box-laplacian plan Phase 4
 - `tests/test_plot.py` — 42 tests  ← plot Phase 3 + slider + volume/isosurface helpers + n_modes cap
