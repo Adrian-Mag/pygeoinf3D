@@ -194,7 +194,7 @@ pygeoinf3D/
 │   │   ├── test_box_laplacian.py          ← Phase 3 + spectral interface + GeneralizedBoxLaplacian equivalence (26 tests)
 │   │   ├── test_inverse_box_laplacian.py  ← InverseLaplacian plan + spectral interface (37 tests)
 │   │   ├── test_generalized_box_laplacian.py  ← GeneralizedBoxLaplacian plan Phases 1-4 (54 tests)
-│   │   ├── test_bessel_sobolev_box.py    ← bessel-sobolev-box-plan Phase 1 (31 tests)
+│   │   ├── test_bessel_sobolev_box.py    ← bessel-sobolev-box-plan Phase 2 (40 tests)
 │   │   └── test_sola.py              ← SOLA Phase 1+2+3+4
 │   ├── sampling/
 │   │   ├── __init__.py
@@ -1545,7 +1545,7 @@ conda run -n inferences3 python -m pytest tests/ -q
 - `tests/operators/test_sola.py` — 29 tests  ← SOLA Phases 1+2+3+4
 - `tests/operators/test_inverse_box_laplacian.py` — 37 tests  ← InverseLaplacian plan + spectral interface
 - `tests/operators/test_generalized_box_laplacian.py` — 54 tests  ← GeneralizedBoxLaplacian plan Phases 1-4
-- `tests/operators/test_bessel_sobolev_box.py` — 31 tests  ← bessel-sobolev-box-plan Phase 1
+- `tests/operators/test_bessel_sobolev_box.py` — 40 tests  ← bessel-sobolev-box-plan Phase 2
 - `tests/sampling/test_kl_sampler.py` — 47 tests  ← spectral-kl plan + GeneralizedBoxLaplacian integration
 - `tests/sampling/test_kl_generalized_integration.py` — 10 tests  ← generalized-box-laplacian plan Phase 4
 - `tests/test_plot.py` — 42 tests  ← plot Phase 3 + slider + volume/isosurface helpers + n_modes cap

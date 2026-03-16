@@ -1,4 +1,4 @@
-"""Tests for BesselSobolevBox spectral operator (Phase 1).
+"""Tests for BesselSobolevBox spectral operator (Phases 1-2).
 
 Covers:
 - Constructor validation (shift > 0, box domain identity)
@@ -7,6 +7,8 @@ Covers:
 - Positive and negative order both work through the unified formula
 - SpectralOperator3D / SpectralPowerBase3D interface satisfaction
 - Apply-to-eigenfunction correctness (eigenvalue-scale check)
+- Ladder semantics: B(-s)∘B(s)=I, B(s1)∘B(s2)=B(s1+s2)
+- Self-adjointness: <Bf, g> = <f, Bg> in L²
 """
 
 from __future__ import annotations
@@ -405,3 +407,311 @@ class TestApplySemantics:
         original_vals = np.asarray(phi0(test_pts), dtype=float)
 
         npt.assert_allclose(result_vals, original_vals, rtol=1e-3, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# TestLadderSemantics
+# ---------------------------------------------------------------------------
+
+class TestLadderSemantics:
+    """Verify operator action, self-adjointness and ladder composition."""
+
+    # -----------------------------------------------------------------------
+    # Helpers
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _make_op(space, provider, shift, order, quad_resolution=20):
+        return BesselSobolevBox(
+            space,
+            provider,
+            shift=shift,
+            order=order,
+            quad_resolution=quad_resolution,
+        )
+
+    @staticmethod
+    def _quad_inner(f, g, box, res=20):
+        """Numerical L² inner product of two Function3D objects."""
+        pts = box.structured_mesh(res)
+        weights = box.volume_weights(res)
+        f_vals = np.asarray(f(pts), dtype=float)
+        g_vals = np.asarray(g(pts), dtype=float)
+        return float(np.dot(f_vals * g_vals, weights))
+
+    # -----------------------------------------------------------------------
+    # Tests
+    # -----------------------------------------------------------------------
+
+    def test_apply_all_eigenfunctions(
+        self, space, dirichlet_provider
+    ):
+        """Apply to each eigenfunction gives mu_k * phi_k pointwise.
+
+        Checks order=1 and order=2 for the first 4 modes.
+        """
+        test_pts = np.array([
+            [0.25, 0.25, 0.25],
+            [0.5,  0.5,  0.5],
+            [0.75, 0.25, 0.5],
+        ])
+        for order in [1.0, 2.0]:
+            op = self._make_op(
+                space, dirichlet_provider, shift=1.0, order=order
+            )
+            n_check = min(4, op.n_modes)
+            for idx in range(n_check):
+                phi_k = dirichlet_provider.get_eigenfunction(idx)
+                mu_k = op.get_eigenvalue(idx)
+                result = op(phi_k)
+                result_vals = np.asarray(result(test_pts), dtype=float)
+                expected_vals = mu_k * np.asarray(
+                    phi_k(test_pts), dtype=float
+                )
+                npt.assert_allclose(
+                    result_vals,
+                    expected_vals,
+                    rtol=1e-4,
+                    atol=1e-6,
+                    err_msg=(
+                        f"order={order}, mode={idx}: "
+                        "B*phi_k != mu_k*phi_k"
+                    ),
+                )
+
+    def test_self_adjointness_spectral(
+        self, space, dirichlet_provider
+    ):
+        """<B f, g> = <f, B g> in L² for smooth test functions."""
+        np.random.seed(7)
+        shift = 1.0
+        order = 1.5
+        op = self._make_op(
+            space, dirichlet_provider, shift=shift, order=order
+        )
+        n = dirichlet_provider.dim
+        # Build two functions as random linear combinations of eigenfunctions
+        c_f = np.random.randn(n)
+        c_g = np.random.randn(n)
+
+        # f = sum_k c_f[k] * phi_k
+        eigenfuncs = [
+            dirichlet_provider.get_eigenfunction(k) for k in range(n)
+        ]
+
+        def make_combo(coeffs):
+            snapshot = list(zip(coeffs, eigenfuncs))
+
+            def _eval(x):
+                x = np.asarray(x, dtype=float)
+                total = np.zeros(
+                    len(x) if x.ndim == 2 else ()
+                )
+                for c, phi in snapshot:
+                    total = total + c * np.asarray(phi(x), dtype=float)
+                return total
+
+            from pygeoinf3d.core.functions import Function3D
+            return Function3D(
+                space.function_domain, evaluate_callable=_eval
+            )
+
+        f = make_combo(c_f)
+        g = make_combo(c_g)
+
+        box = space.function_domain
+        bf_dot_g = self._quad_inner(op(f), g, box)
+        f_dot_bg = self._quad_inner(f, op(g), box)
+
+        npt.assert_allclose(
+            bf_dot_g,
+            f_dot_bg,
+            rtol=1e-4,
+            atol=1e-8,
+            err_msg="Self-adjointness failed: <Bf,g> != <f,Bg>",
+        )
+
+    def test_ladder_composition_identity(
+        self, space, dirichlet_provider
+    ):
+        """B(order=s) then B(order=-s) recovers the input function."""
+        test_pts = np.array([
+            [0.3, 0.3, 0.3],
+            [0.5, 0.5, 0.5],
+            [0.7, 0.4, 0.3],
+        ])
+        # Build a sum of the first 3 eigenfunctions
+        n_modes = min(3, dirichlet_provider.dim)
+        coeffs = np.array([1.0, 0.5, -0.3])[:n_modes]
+        eigenfuncs = [
+            dirichlet_provider.get_eigenfunction(k) for k in range(n_modes)
+        ]
+
+        def original_vals(pts):
+            total = np.zeros(len(pts))
+            for c, phi in zip(coeffs, eigenfuncs):
+                total = total + c * np.asarray(phi(pts), dtype=float)
+            return total
+
+        for s in [0.5, 1.0, 2.0]:
+            op_pos = self._make_op(
+                space, dirichlet_provider, shift=1.0, order=s
+            )
+            op_neg = self._make_op(
+                space, dirichlet_provider, shift=1.0, order=-s
+            )
+            # Build function object to pass to operators
+            snap = list(zip(coeffs, eigenfuncs))
+
+            def _eval_f(x, _snap=snap):
+                x = np.asarray(x, dtype=float)
+                t = np.zeros(len(x) if x.ndim == 2 else ())
+                for c, phi in _snap:
+                    t = t + c * np.asarray(phi(x), dtype=float)
+                return t
+
+            from pygeoinf3d.core.functions import Function3D
+            f = Function3D(
+                space.function_domain, evaluate_callable=_eval_f
+            )
+            result = op_neg(op_pos(f))
+            result_vals = np.asarray(result(test_pts), dtype=float)
+            expected = original_vals(test_pts)
+            npt.assert_allclose(
+                result_vals,
+                expected,
+                rtol=1e-3,
+                atol=1e-5,
+                err_msg=f"Ladder identity failed for s={s}",
+            )
+
+    def test_ladder_composition_additive(
+        self, space, dirichlet_provider
+    ):
+        """B(s1) ∘ B(s2) = B(s1+s2) in the spectral sense."""
+        s1, s2 = 1.0, 0.5
+        shift = 1.0
+        op_s1 = self._make_op(
+            space, dirichlet_provider, shift=shift, order=s1
+        )
+        op_s2 = self._make_op(
+            space, dirichlet_provider, shift=shift, order=s2
+        )
+        op_sum = self._make_op(
+            space, dirichlet_provider, shift=shift, order=s1 + s2
+        )
+        test_pts = np.array([
+            [0.25, 0.25, 0.25],
+            [0.5,  0.5,  0.5],
+            [0.75, 0.25, 0.5],
+        ])
+        n_check = min(3, dirichlet_provider.dim)
+        for idx in range(n_check):
+            phi_k = dirichlet_provider.get_eigenfunction(idx)
+            # B(s1) ∘ B(s2) applied to phi_k
+            composed_vals = np.asarray(
+                op_s1(op_s2(phi_k))(test_pts), dtype=float
+            )
+            # B(s1+s2) applied to phi_k
+            direct_vals = np.asarray(op_sum(phi_k)(test_pts), dtype=float)
+            npt.assert_allclose(
+                composed_vals,
+                direct_vals,
+                rtol=1e-3,
+                atol=1e-6,
+                err_msg=(
+                    f"Additive composition failed for mode {idx}"
+                ),
+            )
+
+    def test_output_domain_is_space_domain(
+        self, space, dirichlet_provider
+    ):
+        """Function3D returned by _apply has correct domain."""
+        op = self._make_op(
+            space, dirichlet_provider, shift=1.0, order=1.0
+        )
+        phi0 = dirichlet_provider.get_eigenfunction(0)
+        result = op(phi0)
+        assert result.domain is space.function_domain
+
+    def test_apply_matches_manual_spectral_sum(
+        self, space, dirichlet_provider
+    ):
+        """Operator output matches hand-computed spectral expansion."""
+        np.random.seed(13)
+        shift = 2.0
+        order = 1.0
+        op = self._make_op(
+            space, dirichlet_provider, shift=shift, order=order
+        )
+        n = dirichlet_provider.dim
+        # Random coefficients for the input function
+        c_in = np.random.randn(n)
+        eigenfuncs = [
+            dirichlet_provider.get_eigenfunction(k) for k in range(n)
+        ]
+        mu = [op.get_eigenvalue(k) for k in range(n)]
+
+        test_pts = np.array([
+            [0.2, 0.3, 0.4],
+            [0.5, 0.5, 0.5],
+            [0.8, 0.2, 0.6],
+        ])
+
+        # Build input function
+        snap_in = list(zip(c_in, eigenfuncs))
+
+        def _eval_f(x, _snap=snap_in):
+            x = np.asarray(x, dtype=float)
+            t = np.zeros(len(x) if x.ndim == 2 else ())
+            for c, phi in _snap:
+                t = t + c * np.asarray(phi(x), dtype=float)
+            return t
+
+        from pygeoinf3d.core.functions import Function3D
+        f = Function3D(space.function_domain, evaluate_callable=_eval_f)
+
+        # Apply operator
+        result = op(f)
+        result_vals = np.asarray(result(test_pts), dtype=float)
+
+        # Manual sum: sum_k mu_k * c_k * phi_k(x)
+        manual = np.zeros(len(test_pts))
+        for c_k, phi_k, mu_k in zip(c_in, eigenfuncs, mu):
+            manual += mu_k * c_k * np.asarray(phi_k(test_pts), dtype=float)
+
+        npt.assert_allclose(
+            result_vals,
+            manual,
+            rtol=1e-4,
+            atol=1e-8,
+            err_msg="Operator output differs from manual spectral sum",
+        )
+
+    def test_neumann_all_modes_finite(
+        self, space, neumann_provider
+    ):
+        """Negative order + shift=1 keeps all eigenvalues finite."""
+        shift = 1.0
+        order = -2.0
+        op = self._make_op(
+            space, neumann_provider, shift=shift, order=order
+        )
+        # Check eigenvalues
+        for i in range(op.n_modes):
+            mu_k = op.get_eigenvalue(i)
+            assert np.isfinite(mu_k), (
+                f"Eigenvalue {i} is non-finite: {mu_k}"
+            )
+            assert mu_k > 0.0, (
+                f"Eigenvalue {i} is non-positive: {mu_k}"
+            )
+        # Check apply on the zero-mode eigenfunction
+        phi0 = neumann_provider.get_eigenfunction(0)
+        result = op(phi0)
+        test_pts = np.array([[0.5, 0.5, 0.5]])
+        val = np.asarray(result(test_pts), dtype=float)
+        assert np.all(np.isfinite(val)), (
+            f"Apply result is non-finite: {val}"
+        )
