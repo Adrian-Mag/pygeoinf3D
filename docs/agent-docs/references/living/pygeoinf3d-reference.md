@@ -1,8 +1,8 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are complete and archived. **`Sobolev3D` Phase 1 is complete** inside the active continuous path-integral Sobolev inversion plan. `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula; `Sobolev3D` is a first-class Hilbert space wrapping `Lebesgue3D` + a weight operator. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the remaining active architecture track. A full 6-notebook demo suite is committed.
+> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are complete and archived. **`Sobolev3D` Phase 1 is complete** inside the active continuous path-integral Sobolev inversion plan. **`Path3D` Phase 2 is complete** (callable, polyline, and point-sample constructors; normalized arc-length parameterization; 25 tests). `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula; `Sobolev3D` is a first-class Hilbert space wrapping `Lebesgue3D` + a weight operator. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the remaining active architecture track. A full 6-notebook demo suite is committed.
 >
-> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5); `continuous-path-integral-sobolev-inversion-plan.md` (phases 2–5).
+> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5); `continuous-path-integral-sobolev-inversion-plan.md` (phases 3–5).
 >
 > **Last updated:** 2026-03-16
 
@@ -13,7 +13,7 @@
 | Plan | Status |
 |------|--------|
 | `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` | **Active** — phases 3–5 in progress |
-| `continuous-path-integral-sobolev-inversion-plan.md` | **Active** — Phase 1 complete; phases 2–5 pending |
+| `continuous-path-integral-sobolev-inversion-plan.md` | **Active** — Phases 1–2 complete; phases 3–5 pending |
 | `bessel-sobolev-box-plan.md` | **Complete** — archived to `completed-plans/` |
 
 All other plans (foundation, SOLA, volumetric-kernel-providers, least-norm demo, synced-slice comparison, KL fast-path plot, InverseBoxLaplacian, SpectralOperator3D KL sampler, GeneralizedBoxLaplacian all 5 phases, plan-reference-cleanup, interactive-slice-slider) have been moved to `completed-plans/`.
@@ -134,7 +134,8 @@ pygeoinf3D/
 │   │   ├── region.py        # Region3D
 │   │   ├── domain_base.py   # Domain3D, StructuredDomain3D
 │   │   ├── boundary.py      # Boundary3D
-│   │   └── functions.py     # Function3D  ← Phase 2
+│   │   ├── functions.py     # Function3D  ← Phase 2
+│   │   └── paths.py         # Path3D  ← Sobolev-inversion Phase 2
 │   ├── spaces/
 │   │   ├── __init__.py      # Re-exports Lebesgue3D, VolumeKernel3D, Sobolev3D
 │   │   ├── forms.py         # VolumeKernel3D  ← Phase 2
@@ -180,7 +181,8 @@ pygeoinf3D/
 │   │   ├── test_region.py
 │   │   ├── test_domain_base.py
 │   │   ├── test_boundary.py
-│   │   └── test_functions.py         ← Phase 2
+│   │   ├── test_functions.py         ← Phase 2
+│   │   └── test_paths.py             ← Sobolev-inversion Phase 2 (25 tests)
 │   ├── spaces/
 │   │   ├── __init__.py
 │   │   ├── test_lebesgue.py          ← Phase 2, extended Phase 4
@@ -413,6 +415,49 @@ Two construction modes:
 
 Raises `ValueError` if `evaluate_callable` is omitted.  Raises `ValueError` on
 arithmetic with functions on different domain instances.
+
+---
+
+### `Path3D` — `pygeoinf3d.core.paths`
+
+A parameterized curve $\gamma : [0, 1] \to \mathbb{R}^3$ living inside a `Domain3D`.
+The normalized parameter $t \in [0, 1]$ always measures **normalized arc length**.
+
+Do not instantiate directly; use the class-method constructors.
+
+```python
+# Smooth callable
+Path3D.from_callable(gamma, t_start, t_end, *, domain=None, n_approx_pts=200)
+
+# Piecewise-linear polyline
+Path3D.from_polyline(waypoints,   *, domain=None)   # waypoints: (n, 3) array, n ≥ 2
+
+# Point-sample (alias for polyline in Phase 2)
+Path3D.from_points(points,        *, domain=None)   # points:    (n, 3) array, n ≥ 2
+```
+
+The `gamma` callable must accept:
+- scalar `t` → returns `(3,)` array
+- array `t` of shape `(n,)` → returns `(n, 3)` array
+
+| Member | Description |
+|--------|-------------|
+| `path(t)` | Evaluate at normalized `t ∈ [0,1]`; scalar → `(3,)`, array → `(n, 3)` |
+| `.arclength` | Total arc length `float` |
+| `.arc_length_nodes(n)` | `(t_arr shape (n,), pts_arr shape (n, 3))` — equally spaced in arc length |
+| `.domain` | Optional `Domain3D` reference (stored only, no containment check in Phase 2) |
+| `repr` | `"Path3D(mode='<mode>', arclength=<float>)"` |
+
+**Construction details:**
+
+- *callable*: arc length approximated on a uniform grid of `n_approx_pts` points in
+  `[t_start, t_end]`; evaluation maps normalized `t` → raw `t` via chord-length
+  interpolation on the same grid, then delegates to the user callable.
+- *polyline / point-sample*: arc length is exact (sum of chord lengths); evaluation
+  uses `np.searchsorted` on the cumulative chord-length array.
+
+**Phase 2 caveat:** `from_points` is identical to `from_polyline` (piecewise-linear).
+Spline interpolation is deferred to a future phase.
 
 ---
 

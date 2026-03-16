@@ -11,6 +11,7 @@ from .core.region import Region3D
 from .core.domain_base import Domain3D, StructuredDomain3D
 from .core.boundary import Boundary3D
 from .core.functions import Function3D
+from .core.paths import Path3D
 from .spaces.lebesgue import Lebesgue3D
 from .spaces.forms import VolumeKernel3D
 from .spaces.sobolev import Sobolev3D
@@ -54,8 +55,9 @@ __all__ = [
     "Domain3D",
     "StructuredDomain3D",
     "Boundary3D",
-    # Functions and spaces
+    # Functions, paths, and spaces
     "Function3D",
+    "Path3D",
     "Lebesgue3D",
     "VolumeKernel3D",
     "Sobolev3D",

@@ -15,6 +15,7 @@ from .region import Region3D
 from .domain_base import Domain3D, StructuredDomain3D
 from .boundary import Boundary3D
 from .functions import Function3D
+from .paths import Path3D
 
 __all__ = [
     "AxisAlignedBoundingBox",
@@ -24,4 +25,5 @@ __all__ = [
     "StructuredDomain3D",
     "Boundary3D",
     "Function3D",
+    "Path3D",
 ]
