@@ -660,3 +660,154 @@ class TestPhase4PublicAPIExports:
         """FunctionToKernelAdapter appears in pygeoinf3d.__all__."""
         import pygeoinf3d
         assert "FunctionToKernelAdapter" in pygeoinf3d.__all__
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 tests: PathIntegralFunctional as SOLA kernels
+# ---------------------------------------------------------------------------
+
+class TestSOLAOperator3DWithPathFunctionals:
+    """SOLAOperator3D accepts PathIntegralFunctional as measurement forms.
+
+    Covers (Phase 5):
+    - Construction with a list of PathIntegralFunctional succeeds
+    - Forward map with constant function: A(f)[i] = c * arclength_i
+    - Dual of a unit codomain dual gives a scalar multiple of PathIntegralFunctional
+    - Adjoint raises TypeError with a Phase 5 / Sobolev3D hint message
+    - Mixing VolumeKernel3D and PathIntegralFunctional in the same list is rejected
+    - Backward compatibility: VolumeKernel3D workflows are unchanged
+    """
+
+    def test_accepts_path_integral_functionals(self, unit_box, space):
+        """SOLAOperator3D construction with PathIntegralFunctional list succeeds."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+        from pygeoinf3d.core.paths import Path3D
+
+        path_a = Path3D.from_polyline(
+            np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        )
+        path_b = Path3D.from_polyline(
+            np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        )
+        form_a = PathIntegralFunctional(space, path_a)
+        form_b = PathIntegralFunctional(space, path_b)
+
+        codomain = EuclideanSpace(2)
+        op = SOLAOperator3D(space, codomain, [form_a, form_b])
+
+        assert isinstance(op, LinearOperator)
+        assert op.codomain.dim == 2
+
+    def test_forward_path_integral_constant_fn(self, unit_box, space):
+        """Forward map with constant f=c gives c * arclength for each path.
+
+        Path a: (0,0,0)→(1,0,0), arclength = 1.0  → ℓ_a(c) = c * 1.0
+        Path b: (0,0,0)→(0,1,0), arclength = 1.0  → ℓ_b(c) = c * 1.0
+        """
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+        from pygeoinf3d.core.paths import Path3D
+
+        path_a = Path3D.from_polyline(
+            np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        )
+        path_b = Path3D.from_polyline(
+            np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        )
+        form_a = PathIntegralFunctional(space, path_a)
+        form_b = PathIntegralFunctional(space, path_b)
+
+        c = 3.0
+        codomain = EuclideanSpace(2)
+        op = SOLAOperator3D(space, codomain, [form_a, form_b])
+
+        f = const_fn(unit_box, c)
+        y = op(f)
+
+        npt.assert_allclose(y[0], c * path_a.arclength, rtol=1e-3, atol=1e-3)
+        npt.assert_allclose(y[1], c * path_b.arclength, rtol=1e-3, atol=1e-3)
+
+    def test_dual_mapping_path_functionals(self, unit_box, space):
+        """Dual of a unit codomain dual returns a scalar PathIntegralFunctional.
+
+        With a single PathIntegralFunctional and yp with component [c],
+        op.dual(yp) must return a PathIntegralFunctional that evaluates as
+        c * form(f) for a test function f.
+        """
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+        from pygeoinf3d.core.paths import Path3D
+
+        path = Path3D.from_polyline(
+            np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        )
+        form = PathIntegralFunctional(space, path)
+
+        codomain = EuclideanSpace(1)
+        op = SOLAOperator3D(space, codomain, [form])
+
+        c = 2.5
+        yp = LinearForm(codomain, components=np.array([c]))
+        xp = op.dual(yp)
+
+        assert isinstance(xp, PathIntegralFunctional)
+
+        # Verify: xp(f) = c * form(f) for a constant test function
+        f = const_fn(unit_box, 1.0)
+        npt.assert_allclose(xp(f), c * form(f), rtol=1e-6, atol=1e-6)
+
+    def test_adjoint_path_functionals_raises_clear_error(self, unit_box, space):
+        """Adjoint with path-integral forms on a Lebesgue3D raises TypeError
+        with a helpful message pointing to Phase 5 / Sobolev3D representers."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+        from pygeoinf3d.core.paths import Path3D
+
+        path = Path3D.from_polyline(
+            np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        )
+        form = PathIntegralFunctional(space, path)
+
+        codomain = EuclideanSpace(1)
+        op = SOLAOperator3D(space, codomain, [form])
+
+        y = np.array([1.0])
+        with pytest.raises(TypeError, match="Phase 5"):
+            op.adjoint(y)
+
+    def test_mixed_form_types_rejected(self, unit_box, space):
+        """Mixing VolumeKernel3D and PathIntegralFunctional raises TypeError."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+        from pygeoinf3d.core.paths import Path3D
+
+        vk = VolumeKernel3D(space, const_fn(unit_box, 1.0))
+        path = Path3D.from_polyline(
+            np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        )
+        pif = PathIntegralFunctional(space, path)
+
+        codomain = EuclideanSpace(2)
+        with pytest.raises(TypeError, match="same type"):
+            SOLAOperator3D(space, codomain, [vk, pif])
+
+    def test_backward_compat_volume_kernels_still_work(self, unit_box, space):
+        """Phase 5 generalization does not break existing VolumeKernel3D workflow.
+
+        Checks forward + adjoint identity identical to Phase 2 analytic tests.
+        """
+        k1 = const_fn(unit_box, 1.0)
+        k2 = linear_fn(unit_box, 0)
+        m1 = VolumeKernel3D(space, k1)
+        m2 = VolumeKernel3D(space, k2)
+
+        codomain = EuclideanSpace(2)
+        op = SOLAOperator3D(space, codomain, [m1, m2])
+
+        # Forward: ∫ 1·x₀ dV = 0.5, ∫ x₀·x₀ dV = 1/3
+        f = linear_fn(unit_box, 0)
+        y = op(f)
+        npt.assert_allclose(y[0], 0.5,       rtol=5e-3, atol=5e-3)
+        npt.assert_allclose(y[1], 1.0 / 3.0, rtol=5e-3, atol=5e-3)
+
+        # Adjoint identity ⟨A†y, f⟩_V = ⟨y, Af⟩_W
+        y_vec = np.array([2.0, -1.0])
+        lhs = space.inner_product(op.adjoint(y_vec), f)
+        rhs = codomain.inner_product(y_vec, op(f))
+        npt.assert_allclose(lhs, rhs, rtol=5e-3, atol=5e-3)
