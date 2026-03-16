@@ -1,6 +1,6 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are complete and archived. **`Sobolev3D` Phase 1 is complete** inside the active continuous path-integral Sobolev inversion plan. **`Path3D` Phase 2 is complete** (callable, polyline, and point-sample constructors; normalized arc-length parameterization; 25 tests). **`PathIntegralFunctional` Phase 3 is complete** (path-integral linear form; composite trapezoidal quadrature; scalar algebra; domain/type validation; 30 tests). **`SOLAOperator3D` Phase 4 is complete** (generalized to accept any `LinearForm` subclass — `VolumeKernel3D` or `PathIntegralFunctional` — with type-homogeneity enforcement and clear adjoint error for path forms on plain `Lebesgue3D`; 6 new tests). `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula; `Sobolev3D` is a first-class Hilbert space wrapping `Lebesgue3D` + a weight operator. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the remaining active architecture track. A full 6-notebook demo suite is committed.
+> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are complete and archived. **`Sobolev3D` Phase 1 is complete** inside the active continuous path-integral Sobolev inversion plan. **`Path3D` Phase 2 is complete** (callable, polyline, and point-sample constructors; normalized arc-length parameterization; 25 tests). **`PathIntegralFunctional` Phase 3 is complete** (path-integral linear form; composite trapezoidal quadrature; scalar algebra; domain/type validation; 30 tests). **`SOLAOperator3D` Phase 4 + Phase 4 Revision is complete** (generalized to accept any `LinearForm` subclass — `VolumeKernel3D` or `PathIntegralFunctional` — including mixed stacks; dual returns `SumLinearForm` for multi-path and mixed stacks; adjoint error for unsupported forms on plain `Lebesgue3D`; 6+9 tests). **`SumLinearForm` is complete** (weighted sum composite form; basis-free evaluation; 9 tests). `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula; `Sobolev3D` is a first-class Hilbert space wrapping `Lebesgue3D` + a weight operator. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the remaining active architecture track. A full 6-notebook demo suite is committed.
 >
 > **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5); `continuous-path-integral-sobolev-inversion-plan.md` (phase 5 only).
 >
@@ -140,8 +140,8 @@ pygeoinf3D/
 │   │   ├── functions.py     # Function3D  ← Phase 2
 │   │   └── paths.py         # Path3D  ← Sobolev-inversion Phase 2
 │   ├── spaces/
-│   │   ├── __init__.py      # Re-exports Lebesgue3D, VolumeKernel3D, PathIntegralFunctional, Sobolev3D
-│   │   ├── forms.py         # VolumeKernel3D, PathIntegralFunctional  ← Phase 2 / Sobolev-inversion Phase 3
+│   │   ├── __init__.py      # Re-exports Lebesgue3D, VolumeKernel3D, PathIntegralFunctional, SumLinearForm, Sobolev3D
+│   │   ├── forms.py         # VolumeKernel3D, PathIntegralFunctional, SumLinearForm  ← Phase 2 / Sobolev-inversion Phase 3+4R
 │   │   ├── lebesgue.py      # Lebesgue3D  ← Phase 2, updated Phase 4
 │   │   └── sobolev.py       # Sobolev3D  ← Sobolev-inversion Phase 1
 │   ├── geometries/
@@ -166,7 +166,7 @@ pygeoinf3D/
 │   │   ├── inverse_laplacian_box.py  # InverseBoxLaplacian  ← pseudoinverse mode delegates to GeneralizedBoxLaplacian(power=-1); shift/strict use own apply — Phase 3
 │   │   ├── generalized_box_laplacian.py  # GeneralizedBoxLaplacian (full impl, inherits SpectralPowerBase3D)  ← generalized-box-laplacian Phases 1–2
 │   │   ├── bessel_sobolev_box.py  # BesselSobolevBox (shifted spectral weights with real order)  ← bessel-sobolev-box-plan
-│   │   └── sola.py            # SOLAOperator3D  ← SOLA Phase 1+2+3+4 (Phase 4: LinearForm generalization)
+│   │   └── sola.py            # SOLAOperator3D  ← SOLA Phase 1+2+3+4+4R (Phase 4R: SumLinearForm dual, mixed-type acceptance)
 │   ├── sampling/              # KL expansion sampler  ← spectral-kl plan
 │   │   ├── __init__.py        # Re-exports KLSampler3D
 │   │   └── kl_sampler.py      # KLSampler3D
@@ -1004,24 +1004,25 @@ same structure with cosines and normalisation factor $1/\sqrt{L}$ for k=0.
 ### `SOLAOperator3D` — `pygeoinf3d.operators.sola`
 
 Measurement operator stacking linear forms into a finite-dimensional
-codomain.  Inherits from `pygeoinf.LinearOperator`.  **Phase 4 (SOLA generalization) complete:**
+codomain.  Inherits from `pygeoinf.LinearOperator`.  **Phase 4 + Phase 4 Revision complete:**
 forward, dual, and adjoint mappings all basis-free on the domain side;
 provider-backed lazy + cached kernel access; public API locked with export
-tests; accepts `VolumeKernel3D` or `PathIntegralFunctional` form stacks
-(all same type); adjoint limited to `VolumeKernel3D` stacks on plain `Lebesgue3D`.
+tests; accepts any mix of `VolumeKernel3D` and `PathIntegralFunctional` form stacks;
+dual returns `SumLinearForm` for multi-path or mixed stacks; adjoint limited
+to `VolumeKernel3D` stacks on plain `Lebesgue3D`.
 
 ```python
 SOLAOperator3D(
     domain: Lebesgue3D,
     codomain,                         # any HilbertSpace with dim == n_kernels
     kernels: Sequence[LinearForm] | KernelProvider3D,
-    # Sequence must be all-VolumeKernel3D or all-PathIntegralFunctional
+    # Sequence may mix VolumeKernel3D and PathIntegralFunctional freely
 )
 ```
 
 Accepts either a **sequence** of `LinearForm` objects (eager, sequence-backed;
-all elements must be the same concrete subtype — mixing is rejected) or a
-**`KernelProvider3D`** instance (lazy, provider-backed with internal caching).
+mixed types are now permitted) or a **`KernelProvider3D`** instance (lazy,
+provider-backed with internal caching).
 
 The operator evaluates:
 $$Af = \bigl(\ell_1(f),\,\ldots,\,\ell_m(f)\bigr) \in W.$$
@@ -1029,12 +1030,15 @@ $$Af = \bigl(\ell_1(f),\,\ldots,\,\ell_m(f)\bigr) \in W.$$
 Output is assembled as `codomain.from_components(raw_components)` where
 `raw_components[i] = kernels[i](f)`.
 
-**Dual mapping** ($A^*: W^* \to V^*$):
+**Dual mapping** ($A^*: W^* \to V^*$) — three return paths:
 $$A^*(y') = \sum_i c_i \ell_i, \quad c = \texttt{codomain.dual.to\_components}(y').$$
-For `VolumeKernel3D` stacks returns a `VolumeKernel3D` with kernel $\sum_i c_i k_i$.
-For `PathIntegralFunctional` stacks returns a `PathIntegralFunctional` (single-form
-case) or relies on form arithmetic (same-path constraint applies for multi-form
-sums via `PathIntegralFunctional.__add__`).
+
+1. **Single form (n=1):** returns `float(c[0]) * ℓ_0` via the form's own `__mul__`.
+2. **All-`VolumeKernel3D` stacks:** returns a single `VolumeKernel3D` via direct
+   addition (backward-compatible; enables `Lebesgue3D.from_dual`).
+3. **Otherwise (mixed types or multi-path stacks):** returns a `SumLinearForm`
+   wrapping the weighted terms.  Phase 5 representer logic consumes this.
+
 Never calls `Lebesgue3D.to_components` or `from_components`.
 
 **Adjoint mapping** ($A^\dagger: W \to V$):
@@ -1043,8 +1047,8 @@ A†(y) = domain.from_dual(A*(codomain.to_dual(y)))
 ```
 Correct for `EuclideanSpace` and `MassWeightedHilbertSpace` codomains.
 **Limitation:** only works when measurement forms are all `VolumeKernel3D`.
-When path-integral forms are used, `domain.from_dual` raises `TypeError`
-(path-integral representers require a `Sobolev3D` domain) and
+When path-integral or mixed forms are used, `domain.from_dual` receives a
+`PathIntegralFunctional` or `SumLinearForm` and raises `TypeError`;
 `SOLAOperator3D._adjoint_mapping` re-raises with a helpful Phase 5 hint.
 
 **Constructor validation (sequence-backed):**
@@ -1053,8 +1057,7 @@ When path-integral forms are used, `domain.from_dual` raises `TypeError`
 - Raises `TypeError` if any element of `kernels` is not a `LinearForm` subclass.
 - Raises `ValueError` if any kernel's `.domain` is not the exact same
   `Lebesgue3D` instance as `domain` (identity check).
-- Raises `TypeError` if the kernel list has mixed concrete types
-  (e.g. one `VolumeKernel3D` and one `PathIntegralFunctional`).
+- Mixed concrete types are **accepted** (no longer rejected).
 
 **Constructor validation (provider-backed):**
 - Same `TypeError` / `ValueError` for domain/dim checks.
@@ -1065,8 +1068,8 @@ When path-integral forms are used, `domain.from_dual` raises `TypeError`
 | `.kernels` | Realized `list`; for sequence mode returns copy; for provider mode, materializes lazily via cache |
 | `._get_kernel(i)` | Internal: returns `_kernels[i]` (sequence) or cached `_provider.get_kernel(i)` (provider) |
 | `.__call__(f)` | Forward mapping; returns codomain element via `from_components` |
-| `.dual(yp)` | Dual mapping; returns weighted linear-form sum |
-| `.adjoint(y)` | Adjoint mapping; works for `VolumeKernel3D` stacks; raises `TypeError` with Phase 5 hint for path stacks |
+| `.dual(yp)` | Dual mapping; returns `VolumeKernel3D`, `PathIntegralFunctional`, or `SumLinearForm` |
+| `.adjoint(y)` | Adjoint mapping; works for `VolumeKernel3D` stacks; raises `TypeError` with Phase 5 hint otherwise |
 | `.domain` | The `Lebesgue3D` passed at construction |
 | `.codomain` | The finite-dimensional target space |
 
@@ -1076,23 +1079,53 @@ When path-integral forms are used, `domain.from_dual` raises `TypeError`
 - Dual uses `codomain.dual.to_components(yp)`, **not** `codomain.to_components(y)`.
 - Provider-backed mode uses `self._kernel_cache: dict[int, LinearForm]` to ensure repeated `_get_kernel(i)` calls return identical objects.
 
-**Extension boundary (Phase 4 → 5):**
+**Extension boundary (Phase 4R → 5):**
 
 The forward and dual APIs are **representation-independent**: they work for any
-`LinearForm` sequence (currently `VolumeKernel3D` or `PathIntegralFunctional`)
+`LinearForm` sequence (any mix of `VolumeKernel3D` or `PathIntegralFunctional`)
 or `KernelProvider3D` without accessing domain coefficients or any basis.
 
 The adjoint (`A†`) is **narrower**: it calls `domain.from_dual(xp)` to realise
 the dual element as a primal `Function3D`. `Lebesgue3D.from_dual` only accepts
-`VolumeKernel3D` instances that belong to the **same space instance**. When
-path-integral forms are used, the dual result is a `PathIntegralFunctional`
-(not a `VolumeKernel3D`), and `from_dual` raises. `_adjoint_mapping` catches
-this and re-raises with:
+`VolumeKernel3D` instances. When path-integral or mixed forms are used, the dual
+result is a `PathIntegralFunctional` or `SumLinearForm`, and `from_dual` raises.
+`_adjoint_mapping` catches this and re-raises with:
 
 > *"SOLAOperator3D adjoint: … Phase 5 will add Sobolev3D representer support."*
 
 Phase 5 will add Sobolev3D representer logic so that path-integral forms can be
 adjointed through a Sobolev inner product.
+
+---
+
+### `SumLinearForm` — `pygeoinf3d.spaces.forms`
+
+Composite `LinearForm` representing a weighted sum of component forms
+on the same space.  Produced by `SOLAOperator3D._dual_mapping` when the
+component forms cannot be directly added (multi-path stacks or mixed types).
+
+```python
+SumLinearForm(
+    space: Lebesgue3D,
+    terms: list[tuple[float, LinearForm]],
+)
+```
+
+Evaluation:
+$$\ell(f) = \sum_i c_i \cdot \ell_i(f)$$
+
+| Member | Description |
+|--------|-------------|
+| `.terms` | Read-only copy of `list[tuple[float, LinearForm]]` |
+| `.domain` | The `Lebesgue3D` passed at construction |
+| `.components` | Raises `TypeError` (basis-free) |
+| `.__call__(f)` | Delegates to `_mapping_impl` |
+
+**Validation:** every `form.domain is space` (identity check); raises
+`ValueError` otherwise.  Requires at least one term.
+
+Does **not** implement `__add__` / `__sub__` / `__mul__` algebra — it is a
+terminal representation consumed by Phase 5 representer logic.
 
 ---
 
@@ -1771,7 +1804,8 @@ from pygeoinf3d import (
     GeneralizedBoxLaplacian, # GeneralizedBoxLaplacian plan
     BesselSobolevBox,    # bessel-sobolev-box-plan
     KLSampler3D,         # spectral-kl plan
-    SOLAOperator3D,      # SOLA Phase 1+2+3
+    SOLAOperator3D,      # SOLA Phase 1+2+3+4+4R
+    SumLinearForm,       # Sobolev-inversion Phase 4R
     CoefficientRepresentation3D,  # Phase 4
     LebesgueRepresentation3D,     # Phase 4
     # Lebesgue coefficient architecture Phase 2 — Gram-aware backends
@@ -1821,7 +1855,7 @@ conda run -n inferences3 python -m pytest tests/ -q
 - `tests/operators/test_box_laplacian.py` — 26 tests  ← Phase 3 + spectral interface + equivalence tests
 - `tests/representations/test_lebesgue_representation.py` — 22 tests  ← architecture Phase 1
 - `tests/representations/test_projection_backends.py` — 40 tests  ← architecture Phase 2
-- `tests/operators/test_sola.py` — 35 tests  ← SOLA Phases 1+2+3+4+5
+- `tests/operators/test_sola.py` — 36 tests  ← SOLA Phases 1+2+3+4+4R+5 (mixed-type accepted, SumLinearForm dual)
 - `tests/operators/test_inverse_box_laplacian.py` — 37 tests  ← InverseLaplacian plan + spectral interface
 - `tests/operators/test_generalized_box_laplacian.py` — 54 tests  ← GeneralizedBoxLaplacian plan Phases 1-4
 - `tests/operators/test_bessel_sobolev_box.py` — 40 tests  ← bessel-sobolev-box-plan Phase 2
@@ -1842,5 +1876,5 @@ conda run -n inferences3 python -m pytest tests/ -q
 7. `Lebesgue3D` has `dim == 0` (basis-free Phase 2). `to_components`/`from_components` raise `NotImplementedError`. The inner product is derived from `to_dual` (pairing-first).
 8. `VolumeKernel3D` subclasses `pygeoinf.LinearForm` and overrides `_mapping_impl` to do numerical volume integration. Python's dynamic dispatch routes `__call__` through the override. This avoids the basis-enumeration assumption in `LinearForm._compute_components`. All arithmetic methods (`__add__`, `__sub__`, `__mul__`, `__neg__`, and in-place `__imul__`, `__iadd__`, `__isub__`) are explicitly overridden to keep the object kernel-backed; `LinearForm.__imul__` and `__iadd__` are especially dangerous because they mutate the fake `_components=np.zeros(0)` placeholder silently.
 9. `from_dual` is **conservative**: only accepts `VolumeKernel3D` objects owned by *this* space instance. Generic `LinearForm` objects and foreign-space kernels are rejected.
-10. `SOLAOperator3D` is **fully basis-free on the domain side**: it uses `LinearForm.__call__` directly for each form without enumerating any domain basis. `LinearOperator.from_linear_forms` is explicitly avoided. The **dual mapping** extracts codomain-dual coordinates via `codomain.dual.to_components(yp)` and returns a weighted form sum (a `VolumeKernel3D` for VolumeKernel3D stacks; a `PathIntegralFunctional` for single-form path stacks). The **adjoint mapping** chains `codomain.to_dual(y)` → dual mapping → `domain.from_dual(xp)`, which succeeds for `VolumeKernel3D` stacks and raises `TypeError` (with a Phase 5 hint) for `PathIntegralFunctional` stacks.
-11. `SOLAOperator3D` supports two construction modes: **sequence-backed** (eager, validates all forms at construction; enforces same-type homogeneity via `type(...) is first_type` check; rejects non-`LinearForm` items and cross-domain forms) and **provider-backed** (lazy, kernels fetched via `KernelProvider3D.get_kernel(i)` on demand and cached in `_kernel_cache: dict[int, LinearForm]`). The internal `_get_kernel(i)` method is the single dispatch point that both `_forward` and `_dual_mapping` use. The `.kernels` property materializes the full list via `_get_kernel` in both modes (returning cached objects for provider mode).
+10. `SOLAOperator3D` is **fully basis-free on the domain side**: it uses `LinearForm.__call__` directly for each form without enumerating any domain basis. `LinearOperator.from_linear_forms` is explicitly avoided. The **dual mapping** extracts codomain-dual coordinates via `codomain.dual.to_components(yp)` and returns: (a) for n=1, `float(c[0]) * ℓ_0`; (b) for all-`VolumeKernel3D` stacks, a single `VolumeKernel3D` via direct addition; (c) for mixed or multi-path stacks, a `SumLinearForm` wrapping the weighted terms. The **adjoint mapping** chains `codomain.to_dual(y)` → dual mapping → `domain.from_dual(xp)`, which succeeds for `VolumeKernel3D` stacks and raises `TypeError` (with a Phase 5 hint) for `PathIntegralFunctional` or `SumLinearForm` dual results.
+11. `SOLAOperator3D` supports two construction modes: **sequence-backed** (eager, validates all forms at construction; rejects non-`LinearForm` items and cross-domain forms; **mixed types are now accepted**) and **provider-backed** (lazy, kernels fetched via `KernelProvider3D.get_kernel(i)` on demand and cached in `_kernel_cache: dict[int, LinearForm]`). The internal `_get_kernel(i)` method is the single dispatch point that both `_forward` and `_dual_mapping` use. The `.kernels` property materializes the full list via `_get_kernel` in both modes (returning cached objects for provider mode).

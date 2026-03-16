@@ -8,12 +8,13 @@ Exports:
 """
 
 from .lebesgue import Lebesgue3D
-from .forms import VolumeKernel3D, PathIntegralFunctional
+from .forms import VolumeKernel3D, PathIntegralFunctional, SumLinearForm
 from .sobolev import Sobolev3D
 
 __all__ = [
     "Lebesgue3D",
     "VolumeKernel3D",
     "PathIntegralFunctional",
+    "SumLinearForm",
     "Sobolev3D",
 ]

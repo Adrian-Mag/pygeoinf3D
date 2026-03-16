@@ -476,3 +476,123 @@ class PathIntegralFunctional(LinearForm):
             f"n_quad={self._n_quad}, "
             f"scale={self._scale})"
         )
+
+
+# ===========================================================================
+# SumLinearForm
+# ===========================================================================
+
+class SumLinearForm(LinearForm):
+    """A weighted sum of :class:`~pygeoinf.LinearForm` objects on the same space.
+
+    Evaluation is defined as:
+
+    .. math::
+
+        \\ell(f) = \\sum_i c_i \\cdot \\ell_i(f)
+
+    This class is produced by :class:`~pygeoinf3d.operators.sola.SOLAOperator3D`
+    ``_dual_mapping`` when the component forms cannot be directly added
+    (e.g. :class:`PathIntegralFunctional` instances on different paths, or
+    mixed form types such as :class:`VolumeKernel3D` and
+    :class:`PathIntegralFunctional`).
+
+    Parameters
+    ----------
+    space:
+        The :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` on which all
+        component forms are defined.  Every form in *terms* must satisfy
+        ``form.domain is space``.
+    terms:
+        A list of ``(coefficient, form)`` pairs.  Each *coefficient* is a
+        :class:`float` and each *form* is a :class:`~pygeoinf.LinearForm`
+        whose ``domain`` is *space*.
+
+    Notes
+    -----
+    Like :class:`VolumeKernel3D` and :class:`PathIntegralFunctional`, this
+    class passes ``components=np.zeros(0)`` to bypass
+    :class:`~pygeoinf.LinearForm`'s component-enumeration logic and routes
+    all evaluation through the overridden ``_mapping_impl``.
+
+    ``SumLinearForm`` does **not** implement ``__add__`` / ``__sub__`` /
+    ``__mul__`` algebra — it is a terminal representation produced by the
+    SOLA dual map and consumed by Phase 5 representer logic.
+    """
+
+    def __init__(
+        self,
+        space: "Lebesgue3D",
+        terms: "Sequence[tuple[float, LinearForm]]",
+    ) -> None:
+        from pygeoinf3d.spaces.lebesgue import Lebesgue3D as _Lebesgue3D
+        if not isinstance(space, _Lebesgue3D):
+            raise TypeError(
+                f"'space' must be a Lebesgue3D instance; "
+                f"got {type(space).__name__!r}."
+            )
+        if not terms:
+            raise ValueError(
+                "SumLinearForm requires at least one term."
+            )
+        for i, (c, form) in enumerate(terms):
+            if not isinstance(form, LinearForm):
+                raise TypeError(
+                    f"terms[{i}][1] must be a LinearForm; "
+                    f"got {type(form).__name__!r}."
+                )
+            if form.domain is not space:
+                raise ValueError(
+                    f"terms[{i}][1].domain is not the same Lebesgue3D "
+                    "instance as 'space' (identity check).  "
+                    "All component forms must be defined on the same space."
+                )
+        self._terms: list[tuple[float, LinearForm]] = [
+            (float(c), form) for c, form in terms
+        ]
+        super().__init__(space, components=np.zeros(0))
+
+    # ------------------------------------------------------------------
+    # Disable component access — this form is basis-free
+    # ------------------------------------------------------------------
+
+    @property
+    def components(self) -> None:  # type: ignore[override]
+        """Not available in basis-free mode.
+
+        Raises
+        ------
+        TypeError
+            Always.  ``SumLinearForm`` has no finite-component representation.
+        """
+        raise TypeError(
+            "SumLinearForm has no finite-component representation in "
+            "basis-free mode.  Evaluate the form directly via __call__."
+        )
+
+    # ------------------------------------------------------------------
+    # Evaluation
+    # ------------------------------------------------------------------
+
+    def _mapping_impl(self, g: "Function3D") -> float:
+        """Evaluate ``ℓ(g) = Σ c_i · ℓ_i(g)``."""
+        return sum(c * form(g) for c, form in self._terms)
+
+    # ------------------------------------------------------------------
+    # Read-only access to terms
+    # ------------------------------------------------------------------
+
+    @property
+    def terms(self) -> "list[tuple[float, LinearForm]]":
+        """The list of ``(coefficient, form)`` pairs (read-only copy)."""
+        return list(self._terms)
+
+    # ------------------------------------------------------------------
+    # Repr
+    # ------------------------------------------------------------------
+
+    def __repr__(self) -> str:  # pragma: no cover
+        pairs = ", ".join(
+            f"({c!r}, {type(f).__name__})" for c, f in self._terms
+        )
+        return f"SumLinearForm(space={self.domain!r}, terms=[{pairs}])"

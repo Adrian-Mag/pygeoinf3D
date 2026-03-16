@@ -6,6 +6,12 @@ Covers:
 - Linear-form algebra (scalar mul, neg, add, sub)
 - Domain validation
 - Different-path independence
+
+Also covers SumLinearForm (Phase 4 Revision):
+- Construction and evaluation
+- Weighted-sum semantics
+- Components access raises TypeError
+- Domain validation
 """
 
 from __future__ import annotations
@@ -23,7 +29,12 @@ from pygeoinf3d.core.boundary import Boundary3D
 from pygeoinf3d.core.functions import Function3D
 from pygeoinf3d.core.paths import Path3D
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
-from pygeoinf3d.spaces.forms import VolumeKernel3D, PathIntegralFunctional
+from pygeoinf3d.spaces.forms import (
+    VolumeKernel3D,
+    PathIntegralFunctional,
+    SumLinearForm,
+)
+from pygeoinf import LinearForm
 
 
 # ---------------------------------------------------------------------------
@@ -403,3 +414,117 @@ class TestPathIntegralFunctionalDomainValidation:
         # Should not raise
         ell = PathIntegralFunctional(space, path)
         assert ell.path is path
+
+
+# ---------------------------------------------------------------------------
+# TestSumLinearForm  (Phase 4 Revision)
+# ---------------------------------------------------------------------------
+
+def _make_two_path_forms():
+    """Return (space, form_a, form_b) on a fresh mock Lebesgue3D."""
+    space = _make_space()
+    path_a = Path3D.from_polyline(
+        np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+    )
+    path_b = Path3D.from_polyline(
+        np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    )
+    form_a = PathIntegralFunctional(space, path_a)
+    form_b = PathIntegralFunctional(space, path_b)
+    return space, form_a, form_b
+
+
+class TestSumLinearForm:
+    """SumLinearForm: construction, evaluation, and validation."""
+
+    def test_construction_valid(self):
+        """Basic construction with two PathIntegralFunctional terms."""
+        space, form_a, form_b = _make_two_path_forms()
+        slm = SumLinearForm(space, [(1.0, form_a), (1.0, form_b)])
+        assert isinstance(slm, LinearForm)
+        assert slm.domain is space
+
+    def test_evaluation_sum(self):
+        """SumLinearForm([(1, ℓ1), (1, ℓ2)])(f) == ℓ1(f) + ℓ2(f)."""
+        space, form_a, form_b = _make_two_path_forms()
+        slm = SumLinearForm(space, [(1.0, form_a), (1.0, form_b)])
+
+        f = _const_fn(space.function_domain, 1.0)
+        expected = form_a(f) + form_b(f)
+        result = slm(f)
+        np.testing.assert_allclose(result, expected, rtol=1e-10, atol=1e-10)
+
+    def test_evaluation_weighted_sum(self):
+        """SumLinearForm([(2, ℓ1), (-1, ℓ2)])(f) == 2*ℓ1(f) - ℓ2(f)."""
+        space, form_a, form_b = _make_two_path_forms()
+        slm = SumLinearForm(space, [(2.0, form_a), (-1.0, form_b)])
+
+        f = _const_fn(space.function_domain, 3.0)
+        expected = 2.0 * form_a(f) + (-1.0) * form_b(f)
+        result = slm(f)
+        np.testing.assert_allclose(result, expected, rtol=1e-10, atol=1e-10)
+
+    def test_components_raises(self):
+        """Accessing .components raises TypeError."""
+        space, form_a, form_b = _make_two_path_forms()
+        slm = SumLinearForm(space, [(1.0, form_a), (1.0, form_b)])
+        with pytest.raises(TypeError):
+            _ = slm.components
+
+    def test_terms_property(self):
+        """.terms returns the list of (coeff, form) pairs."""
+        space, form_a, form_b = _make_two_path_forms()
+        terms_in = [(2.0, form_a), (-0.5, form_b)]
+        slm = SumLinearForm(space, terms_in)
+        terms_out = slm.terms
+        assert len(terms_out) == 2
+        assert terms_out[0][0] == pytest.approx(2.0)
+        assert terms_out[0][1] is form_a
+        assert terms_out[1][0] == pytest.approx(-0.5)
+        assert terms_out[1][1] is form_b
+
+    def test_domain_is_space(self):
+        """.domain is the Lebesgue3D passed at construction."""
+        space, form_a, form_b = _make_two_path_forms()
+        slm = SumLinearForm(space, [(1.0, form_a), (1.0, form_b)])
+        assert slm.domain is space
+
+    def test_domain_mismatch_raises(self):
+        """Form defined on a different space raises ValueError."""
+        space_a, form_a, _ = _make_two_path_forms()
+        space_b = _make_space()
+        path_b = Path3D.from_polyline(
+            np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        )
+        form_b_wrong = PathIntegralFunctional(space_b, path_b)
+        with pytest.raises(ValueError, match="same space"):
+            SumLinearForm(space_a, [(1.0, form_a), (1.0, form_b_wrong)])
+
+    def test_isinstance_linear_form(self):
+        """SumLinearForm is a LinearForm instance."""
+        space, form_a, form_b = _make_two_path_forms()
+        slm = SumLinearForm(space, [(1.0, form_a), (1.0, form_b)])
+        assert isinstance(slm, LinearForm)
+
+    def test_terms_returns_copy(self):
+        """.terms returns a new list so external mutation is safe."""
+        space, form_a, form_b = _make_two_path_forms()
+        slm = SumLinearForm(space, [(1.0, form_a), (1.0, form_b)])
+        t1 = slm.terms
+        t1.clear()
+        assert len(slm.terms) == 2
+
+    def test_evaluation_with_volume_kernel_terms(self):
+        """SumLinearForm works with VolumeKernel3D terms."""
+        from pygeoinf3d.core.functions import Function3D
+        space = _make_space()
+        dom = space.function_domain
+        k1 = Function3D(dom, evaluate_callable=lambda pts: np.ones(len(pts)))
+        k2 = Function3D(dom, evaluate_callable=lambda pts: 2.0 * np.ones(len(pts)))
+        vk1 = VolumeKernel3D(space, k1)
+        vk2 = VolumeKernel3D(space, k2)
+        slm = SumLinearForm(space, [(1.0, vk1), (1.0, vk2)])
+        f = _const_fn(dom, 1.0)
+        # Each VolumeKernel3D evaluates f=1 against its kernel
+        expected = vk1(f) + vk2(f)
+        np.testing.assert_allclose(slm(f), expected, rtol=1e-10, atol=1e-10)

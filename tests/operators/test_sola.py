@@ -25,6 +25,11 @@ Covers (Phase 4):
     KernelProvider3D, FunctionToKernelAdapter (names and identity)
 - pygeoinf3d.__all__ contains all four SOLA symbols
 - pygeoinf3d.operators exports SOLAOperator3D
+
+Phase 4 Revision (Phase 4R):
+- Mixed VolumeKernel3D + PathIntegralFunctional stacks are accepted
+- _dual_mapping returns SumLinearForm for mixed/multi-path stacks
+- Adjoint error test uses 2-form path stack (dual returns SumLinearForm)
 """
 
 from __future__ import annotations
@@ -673,8 +678,8 @@ class TestSOLAOperator3DWithPathFunctionals:
     - Construction with a list of PathIntegralFunctional succeeds
     - Forward map with constant function: A(f)[i] = c * arclength_i
     - Dual of a unit codomain dual gives a scalar multiple of PathIntegralFunctional
-    - Adjoint raises TypeError with a Phase 5 / Sobolev3D hint message
-    - Mixing VolumeKernel3D and PathIntegralFunctional in the same list is rejected
+    - Adjoint raises TypeError with a Phase 5 / Sobolev3D hint message (2-form stack)
+    - Mixing VolumeKernel3D and PathIntegralFunctional in the same list is accepted
     - Backward compatibility: VolumeKernel3D workflows are unchanged
     """
 
@@ -754,26 +759,65 @@ class TestSOLAOperator3DWithPathFunctionals:
         f = const_fn(unit_box, 1.0)
         npt.assert_allclose(xp(f), c * form(f), rtol=1e-6, atol=1e-6)
 
+    def test_dual_mapping_multi_path_returns_sum_form(self, unit_box, space):
+        """Dual of a 2-path stack returns a SumLinearForm."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional, SumLinearForm
+        from pygeoinf3d.core.paths import Path3D
+
+        path_a = Path3D.from_polyline(
+            np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        )
+        path_b = Path3D.from_polyline(
+            np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        )
+        form_a = PathIntegralFunctional(space, path_a)
+        form_b = PathIntegralFunctional(space, path_b)
+
+        codomain = EuclideanSpace(2)
+        op = SOLAOperator3D(space, codomain, [form_a, form_b])
+
+        yp = LinearForm(codomain, components=np.array([1.0, 2.0]))
+        xp = op.dual(yp)
+        assert isinstance(xp, SumLinearForm)
+        # Verify evaluation: xp(f) = 1*form_a(f) + 2*form_b(f)
+        f = const_fn(unit_box, 1.0)
+        expected = 1.0 * form_a(f) + 2.0 * form_b(f)
+        npt.assert_allclose(xp(f), expected, rtol=1e-6, atol=1e-6)
+
     def test_adjoint_path_functionals_raises_clear_error(self, unit_box, space):
-        """Adjoint with path-integral forms on a Lebesgue3D raises TypeError
-        with a helpful message pointing to Phase 5 / Sobolev3D representers."""
+        """Adjoint with two path-integral forms on a Lebesgue3D raises TypeError
+        with a helpful message pointing to Phase 5 / Sobolev3D representers.
+
+        Uses two path forms (n>1) so the dual returns a SumLinearForm rather
+        than a single PathIntegralFunctional — confirming the adjoint error
+        fires for both the single and multi-form path cases.
+        """
         from pygeoinf3d.spaces.forms import PathIntegralFunctional
         from pygeoinf3d.core.paths import Path3D
 
-        path = Path3D.from_polyline(
+        path_a = Path3D.from_polyline(
             np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
         )
-        form = PathIntegralFunctional(space, path)
+        path_b = Path3D.from_polyline(
+            np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        )
+        form_a = PathIntegralFunctional(space, path_a)
+        form_b = PathIntegralFunctional(space, path_b)
 
-        codomain = EuclideanSpace(1)
-        op = SOLAOperator3D(space, codomain, [form])
+        codomain = EuclideanSpace(2)
+        op = SOLAOperator3D(space, codomain, [form_a, form_b])
 
-        y = np.array([1.0])
+        y = np.array([1.0, 1.0])
         with pytest.raises(TypeError, match="Phase 5"):
             op.adjoint(y)
 
-    def test_mixed_form_types_rejected(self, unit_box, space):
-        """Mixing VolumeKernel3D and PathIntegralFunctional raises TypeError."""
+    def test_mixed_form_types_accepted(self, unit_box, space):
+        """Mixing VolumeKernel3D and PathIntegralFunctional is now accepted.
+
+        Construction must succeed and the forward map must evaluate each form
+        correctly: VolumeKernel3D gives a volume integral, PathIntegralFunctional
+        gives a path integral.
+        """
         from pygeoinf3d.spaces.forms import PathIntegralFunctional
         from pygeoinf3d.core.paths import Path3D
 
@@ -784,8 +828,17 @@ class TestSOLAOperator3DWithPathFunctionals:
         pif = PathIntegralFunctional(space, path)
 
         codomain = EuclideanSpace(2)
-        with pytest.raises(TypeError, match="same type"):
-            SOLAOperator3D(space, codomain, [vk, pif])
+        # Construction must not raise
+        op = SOLAOperator3D(space, codomain, [vk, pif])
+        assert isinstance(op, LinearOperator)
+
+        # Forward: constant f=2.0
+        # vk(f) = ∫ 1·2 dV = 2.0  (unit box has volume 1)
+        # pif(f) = 2.0 * arclength = 2.0 * 1.0 = 2.0
+        f = const_fn(unit_box, 2.0)
+        y = op(f)
+        npt.assert_allclose(y[0], 2.0, rtol=5e-3, atol=5e-3)
+        npt.assert_allclose(y[1], 2.0 * path.arclength, rtol=1e-3, atol=1e-3)
 
     def test_backward_compat_volume_kernels_still_work(self, unit_box, space):
         """Phase 5 generalization does not break existing VolumeKernel3D workflow.

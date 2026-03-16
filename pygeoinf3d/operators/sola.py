@@ -89,7 +89,7 @@ Provider-backed (lazy + cached)::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence, Union
+from typing import Sequence, Union
 
 import numpy as np
 
@@ -98,9 +98,6 @@ from pygeoinf.linear_operators import LinearOperator
 
 from pygeoinf3d.providers.base import KernelProvider3D
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
-
-if TYPE_CHECKING:
-    from pygeoinf3d.spaces.forms import PathIntegralFunctional, VolumeKernel3D
 
 
 class SOLAOperator3D(LinearOperator):
@@ -113,8 +110,7 @@ class SOLAOperator3D(LinearOperator):
 
     * A **sequence** of :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D`
       or :class:`~pygeoinf3d.spaces.forms.PathIntegralFunctional` objects
-      (eager, sequence-backed mode).  All forms must be the same concrete
-      type.  Mixed lists are rejected; or
+      (eager, sequence-backed mode).  Mixed lists are accepted; or
     * A :class:`~pygeoinf3d.providers.base.KernelProvider3D` instance
       (lazy, provider-backed mode).  Kernels are fetched on demand via
       ``provider.get_kernel(i)`` and cached for stability.
@@ -130,9 +126,10 @@ class SOLAOperator3D(LinearOperator):
         in provider-backed mode).  Only ``from_components`` is exercised by
         the forward mapping.
     kernels:
-        Either a sequence of :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D`
-        or :class:`~pygeoinf3d.spaces.forms.PathIntegralFunctional` objects
-        (all the same concrete type), or a
+        Either a sequence of :class:`~pygeoinf.LinearForm` subclass objects
+        (e.g. :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D` or
+        :class:`~pygeoinf3d.spaces.forms.PathIntegralFunctional`, mixed
+        stacks accepted), or a
         :class:`~pygeoinf3d.providers.base.KernelProvider3D`.
 
     Raises
@@ -144,12 +141,6 @@ class SOLAOperator3D(LinearOperator):
     TypeError
         If *kernels* is a sequence and any element is not a
         :class:`~pygeoinf.LinearForm` (checked eagerly for sequences only).
-    TypeError
-        If *kernels* is a sequence and the elements are not all the same
-        concrete type (mixing
-        :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D` and
-        :class:`~pygeoinf3d.spaces.forms.PathIntegralFunctional` is
-        not supported).
     ValueError
         If *kernels* is a sequence and any kernel is defined on a different
         ``Lebesgue3D`` instance than *domain* (identity check, sequence
@@ -224,19 +215,6 @@ class SOLAOperator3D(LinearOperator):
                         "Build each kernel form with the exact same "
                         "Lebesgue3D object passed as 'domain' here."
                     )
-            # Enforce type homogeneity: no mixing of form types.
-            if kernels_list:
-                first_type = type(kernels_list[0])
-                for i, kernel in enumerate(kernels_list[1:], 1):
-                    if type(kernel) is not first_type:
-                        raise TypeError(
-                            f"All kernel forms must be the same type; "
-                            f"kernels[0] is {first_type.__name__!r} but "
-                            f"kernels[{i}] is "
-                            f"{type(kernel).__name__!r}.  "
-                            "Mixing VolumeKernel3D and PathIntegralFunctional "
-                            "in a single SOLAOperator3D is not supported."
-                        )
             self._provider = None
             self._kernels = kernels_list
             self._n_kernels = len(kernels_list)
@@ -305,13 +283,19 @@ class SOLAOperator3D(LinearOperator):
         """Dual map $A^*: W^* \\to V^*$.
 
         Extracts codomain-dual coordinates and returns the corresponding
-        weighted sum of the kernel-induced forms.  For
-        :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D` form stacks the
-        result is a :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D`
-        (enabling :meth:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D.from_dual`).
-        For other form types the result is a :class:`~pygeoinf.LinearForm`
-        subclass whose concrete type is determined by the forms' own scalar
-        arithmetic.
+        weighted sum of the kernel-induced forms.
+
+        Return type depends on the form stack:
+
+        * **Single form:** ``float(c[0]) * \\ell_0`` via the form's own
+          ``__mul__``.
+        * **All VolumeKernel3D:** a single
+          :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D` built by direct
+          addition (backward-compatible; enables
+          :meth:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D.from_dual`).
+        * **Otherwise (mixed types or path stacks with n>1):** a
+          :class:`~pygeoinf3d.spaces.forms.SumLinearForm` wrapping the
+          weighted terms.  Phase 5 requirer logic handles this type.
 
         Args:
             yp: An element of the codomain dual space (a
@@ -322,26 +306,22 @@ class SOLAOperator3D(LinearOperator):
             $\\sum_i c_i \\ell_i$ where $c_i$ are the dual coordinates of *yp*.
         """
         c = self.codomain.dual.to_components(yp)
-        # PathIntegralFunctional.__add__ requires same-path identity, so
-        # summing forms over different paths is not supported.
-        # Raise early with a clear Phase-5 hint rather than a confusing
-        # ValueError from the form's __add__ guard.
-        if self._n_kernels > 1:
-            k0 = self._get_kernel(0)
-            from pygeoinf3d.spaces.forms import PathIntegralFunctional
-            if isinstance(k0, PathIntegralFunctional):
-                raise TypeError(
-                    "SOLAOperator3D dual/adjoint: cannot sum "
-                    "PathIntegralFunctional forms over different paths — "
-                    "each form has a distinct path and does not support "
-                    "cross-path addition.  "
-                    "Use a Sobolev3D domain with Sobolev representer support "
-                    "(Phase 5) to obtain adjoint elements."
-                )
-        result = float(c[0]) * self._get_kernel(0)
-        for i in range(1, self._n_kernels):
-            result = result + float(c[i]) * self._get_kernel(i)
-        return result
+        if self._n_kernels == 1:
+            return float(c[0]) * self._get_kernel(0)
+        # For all-VolumeKernel3D stacks, use direct addition
+        # (returns a single VolumeKernel3D — backward compatible)
+        from pygeoinf3d.spaces.forms import VolumeKernel3D
+        if all(isinstance(self._get_kernel(i), VolumeKernel3D)
+               for i in range(self._n_kernels)):
+            result = float(c[0]) * self._get_kernel(0)
+            for i in range(1, self._n_kernels):
+                result = result + float(c[i]) * self._get_kernel(i)
+            return result
+        # General case: wrap in SumLinearForm
+        from pygeoinf3d.spaces.forms import SumLinearForm
+        terms = [(float(c[i]), self._get_kernel(i))
+                 for i in range(self._n_kernels)]
+        return SumLinearForm(self.domain, terms)
 
     def _adjoint_mapping(self, y):
         """Adjoint map $A^\\dagger: W \\to V$.
@@ -353,7 +333,8 @@ class SOLAOperator3D(LinearOperator):
 
         When path-integral forms are used with a plain
         :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` domain the dual
-        result is a :class:`~pygeoinf3d.spaces.forms.PathIntegralFunctional`,
+        result is a :class:`~pygeoinf3d.spaces.forms.PathIntegralFunctional`
+        or :class:`~pygeoinf3d.spaces.forms.SumLinearForm`,
         which ``Lebesgue3D.from_dual`` cannot represent.  A ``TypeError``
         is raised with guidance to use a ``Sobolev3D`` domain (Phase 5).
 
