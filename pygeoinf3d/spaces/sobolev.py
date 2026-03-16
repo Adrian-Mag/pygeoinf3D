@@ -245,10 +245,10 @@ class Sobolev3D(HilbertSpace):
         Returns
         -------
         VolumeKernel3D
-            Dual element representing *f* in the Sobolev inner product.
-        """
+            Dual element representing *f* in the Sobolev inner product.            ``.domain`` is ``self`` (this :class:`Sobolev3D` instance),
+            not the underlying ``base_space``.        """
         Wf = self._weight(f)
-        return VolumeKernel3D(self._base_space, Wf)
+        return VolumeKernel3D(self, Wf)
 
     def from_dual(self, fp: Any) -> Function3D:
         r"""Recover a primal function from a dual element.
@@ -278,10 +278,11 @@ class Sobolev3D(HilbertSpace):
         Parameters
         ----------
         fp:
-            A dual element: :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D`,
+            A dual element with ``.domain is self``: one of
+            :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D` (produced by
+            :meth:`to_dual` or as a Sobolev measurement), a
             :class:`~pygeoinf3d.spaces.forms.SumLinearForm`, or any
-            :class:`~pygeoinf.LinearForm` on *base_space* (requires
-            *inverse_weight* to be a
+            :class:`~pygeoinf.LinearForm` (requires *inverse_weight* to be a
             :class:`~pygeoinf3d.operators.base.SpectralOperator3D`).
 
         Returns
@@ -295,25 +296,26 @@ class Sobolev3D(HilbertSpace):
             If *fp* is not one of the supported form types, or if
             *inverse_weight* is not a ``SpectralOperator3D`` when needed.
         ValueError
-            If *fp* was produced by a different :class:`Lebesgue3D` instance.
+            If *fp* was produced by a different space instance
+            (i.e. ``fp.domain is not self``).
         """
         # ── Branch 1: VolumeKernel3D ────────────────────────────────────────
         if isinstance(fp, VolumeKernel3D):
-            if fp.domain is not self._base_space:
+            if fp.domain is not self:
                 raise ValueError(
                     "Sobolev3D.from_dual: the VolumeKernel3D was produced by a "
-                    "different Lebesgue3D instance than this Sobolev3D's "
-                    "base_space.  Dual elements cannot cross space boundaries."
+                    "different space instance than this Sobolev3D.  "
+                    "Dual elements cannot cross space boundaries."
                 )
             return self._inverse_weight(fp.kernel)
 
         # ── Branch 2: SumLinearForm (recursive) ─────────────────────────────
         from pygeoinf3d.spaces.forms import SumLinearForm  # avoid top-level circular
         if isinstance(fp, SumLinearForm):
-            if fp.domain is not self._base_space and fp.domain is not self:
+            if fp.domain is not self:
                 raise ValueError(
                     "Sobolev3D.from_dual: the SumLinearForm was not constructed on "
-                    "this Sobolev3D or its base_space.  "
+                    "this Sobolev3D.  "
                     "Dual elements cannot cross space boundaries."
                 )
             result = self._base_space.zero
@@ -327,10 +329,10 @@ class Sobolev3D(HilbertSpace):
         # ── Branch 3: General LinearForm (spectral representer) ─────────────
         from pygeoinf import LinearForm as _LinearForm
         if isinstance(fp, _LinearForm):
-            if fp.domain is not self._base_space and fp.domain is not self:
+            if fp.domain is not self:
                 raise ValueError(
                     "Sobolev3D.from_dual: the LinearForm was not constructed on "
-                    "this Sobolev3D or its base_space.  "
+                    "this Sobolev3D.  "
                     "Dual elements cannot cross space boundaries."
                 )
             from pygeoinf3d.operators.base import SpectralOperator3D

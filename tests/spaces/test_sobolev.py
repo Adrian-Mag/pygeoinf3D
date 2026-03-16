@@ -298,11 +298,12 @@ class TestSobolev3DToDual:
         fp = sobolev.to_dual(f_func)
         assert isinstance(fp, VolumeKernel3D)
 
-    def test_to_dual_kernel_domain_is_base_space(
-        self, sobolev, base_space, f_func
+    def test_to_dual_domain_is_sobolev(
+        self, sobolev, f_func
     ):
+        """to_dual returns a VolumeKernel3D whose .domain is the Sobolev3D."""
         fp = sobolev.to_dual(f_func)
-        assert fp.domain is base_space
+        assert fp.domain is sobolev
 
     def test_to_dual_kernel_is_wf(self, sobolev, f_func):
         """Kernel of to_dual(f) should evaluate to W*f pointwise."""
@@ -355,7 +356,7 @@ class TestSobolev3DFromDual:
             sobolev.from_dual(object())
 
     def test_rejects_volume_kernel_from_wrong_space(self, sobolev, f_func):
-        """A VolumeKernel3D bound to a different Lebesgue3D is rejected."""
+        """A VolumeKernel3D bound to a different space instance is rejected."""
         # Build a second space on a different domain instance
         other_domain = _UnitCubeDomain(
             Region3D(
@@ -366,7 +367,7 @@ class TestSobolev3DFromDual:
         other_space = Lebesgue3D(other_domain)
         other_f = Function3D(other_domain, evaluate_callable=_f_x0)
         foreign_form = VolumeKernel3D(other_space, other_f)
-        with pytest.raises(ValueError, match="base_space"):
+        with pytest.raises(ValueError, match="different space instance"):
             sobolev.from_dual(foreign_form)
 
 

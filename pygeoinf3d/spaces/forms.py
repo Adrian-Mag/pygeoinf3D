@@ -33,7 +33,8 @@ if TYPE_CHECKING:
 
 class VolumeKernel3D(LinearForm):
     """A linear form on :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D`
-    represented by a volume-integration kernel.
+    or :class:`~pygeoinf3d.spaces.sobolev.Sobolev3D` represented by a
+    volume-integration kernel.
 
     The pairing is:
 
@@ -43,12 +44,16 @@ class VolumeKernel3D(LinearForm):
         \\int_\\Omega f(\\mathbf{x})\\,g(\\mathbf{x})\\,\\mathrm{d}V
 
     where *f* is the :class:`~pygeoinf3d.core.functions.Function3D` kernel.
+    The integral is always computed via ``space.function_domain.integrate_volume``
+    regardless of whether *space* is a ``Lebesgue3D`` or ``Sobolev3D``.
 
     Parameters
     ----------
     space:
-        The :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` on which this
-        form is defined.  This is the form's ``domain``.
+        The Hilbert space on which this form is defined — either a
+        :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` or a
+        :class:`~pygeoinf3d.spaces.sobolev.Sobolev3D`.  This is the form's
+        ``domain``.
     kernel:
         The primal function *f* whose inner product with arbitrary *g* this
         form evaluates.
@@ -112,19 +117,13 @@ class VolumeKernel3D(LinearForm):
 
     def copy(self) -> "VolumeKernel3D":
         """Return a shallow-callable copy.  Callable is shared (immutable)."""
-        return VolumeKernel3D(
-            cast("Lebesgue3D", self.domain), self._kernel.copy()
-        )
+        return VolumeKernel3D(self.domain, self._kernel.copy())
 
     def __neg__(self) -> "VolumeKernel3D":
-        return VolumeKernel3D(
-            cast("Lebesgue3D", self.domain), -self._kernel
-        )
+        return VolumeKernel3D(self.domain, -self._kernel)
 
     def __mul__(self, a: float) -> "VolumeKernel3D":
-        return VolumeKernel3D(
-            cast("Lebesgue3D", self.domain), float(a) * self._kernel
-        )
+        return VolumeKernel3D(self.domain, float(a) * self._kernel)
 
     def __rmul__(self, a: float) -> "VolumeKernel3D":
         return self.__mul__(a)
@@ -140,12 +139,10 @@ class VolumeKernel3D(LinearForm):
             )
         if other.domain is not self.domain:
             raise ValueError(
-                "Cannot add VolumeKernel3D objects from different Lebesgue3D "
+                "Cannot add VolumeKernel3D objects from different space "
                 "instances (domain identity mismatch)."
             )
-        return VolumeKernel3D(
-            cast("Lebesgue3D", self.domain), self._kernel + other._kernel
-        )
+        return VolumeKernel3D(self.domain, self._kernel + other._kernel)
 
     def __sub__(self, other) -> "VolumeKernel3D":
         if not isinstance(other, VolumeKernel3D):
@@ -158,12 +155,10 @@ class VolumeKernel3D(LinearForm):
         if other.domain is not self.domain:
             raise ValueError(
                 "Cannot subtract VolumeKernel3D objects "
-                "from different Lebesgue3D instances "
+                "from different space instances "
                 "(domain identity mismatch)."
             )
-        return VolumeKernel3D(
-            cast("Lebesgue3D", self.domain), self._kernel - other._kernel
-        )
+        return VolumeKernel3D(self.domain, self._kernel - other._kernel)
 
     # ------------------------------------------------------------------
     # In-place arithmetic — must override LinearForm's component-based
@@ -187,7 +182,7 @@ class VolumeKernel3D(LinearForm):
         if other.domain is not self.domain:
             raise ValueError(
                 "Cannot in-place add VolumeKernel3D objects from different "
-                "Lebesgue3D instances (domain identity mismatch)."
+                "space instances (domain identity mismatch)."
             )
         self._kernel = self._kernel + other._kernel
         return self
@@ -203,7 +198,7 @@ class VolumeKernel3D(LinearForm):
         if other.domain is not self.domain:
             raise ValueError(
                 "Cannot in-place subtract VolumeKernel3D objects "
-                "from different Lebesgue3D instances "
+                "from different space instances "
                 "(domain identity mismatch)."
             )
         self._kernel = self._kernel - other._kernel
