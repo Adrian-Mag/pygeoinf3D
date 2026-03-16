@@ -98,6 +98,7 @@ from pygeoinf.linear_operators import LinearOperator
 
 from pygeoinf3d.providers.base import KernelProvider3D
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+from pygeoinf3d.spaces.sobolev import Sobolev3D
 
 
 class SOLAOperator3D(LinearOperator):
@@ -118,8 +119,10 @@ class SOLAOperator3D(LinearOperator):
     Parameters
     ----------
     domain:
-        The :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` on which the
-        kernels are defined.
+        The :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` **or**
+        :class:`~pygeoinf3d.spaces.sobolev.Sobolev3D` on which the kernels
+        are defined.  All kernel forms in *kernels* must have
+        ``kernel.domain is domain`` (identity check).
     codomain:
         A finite-dimensional :class:`~pygeoinf.HilbertSpace` with
         ``codomain.dim == len(kernels)`` (or ``codomain.dim == provider.dim``
@@ -135,16 +138,17 @@ class SOLAOperator3D(LinearOperator):
     Raises
     ------
     TypeError
-        If *domain* is not a :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D`.
+        If *domain* is not a
+        :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` or
+        :class:`~pygeoinf3d.spaces.sobolev.Sobolev3D`.
     ValueError
         If kernel count does not match ``codomain.dim``.
     TypeError
         If *kernels* is a sequence and any element is not a
         :class:`~pygeoinf.LinearForm` (checked eagerly for sequences only).
     ValueError
-        If *kernels* is a sequence and any kernel is defined on a different
-        ``Lebesgue3D`` instance than *domain* (identity check, sequence
-        mode only).
+        If *kernels* is a sequence and any kernel has a different
+        ``domain`` identity than *domain* (sequence mode only).
 
     Notes
     -----
@@ -166,16 +170,7 @@ class SOLAOperator3D(LinearOperator):
         codomain,
         kernels: Union[Sequence[LinearForm], KernelProvider3D],
     ) -> None:
-        # Accept both Lebesgue3D (original) and Sobolev3D (Phase 5+) domains.
-        # For Sobolev3D, forms are defined on the underlying Lebesgue3D base_space.
-        if isinstance(domain, Lebesgue3D):
-            self._lebesgue_domain: Lebesgue3D = domain
-        elif (
-            hasattr(domain, "base_space")
-            and isinstance(getattr(domain, "base_space", None), Lebesgue3D)
-        ):
-            self._lebesgue_domain = domain.base_space
-        else:
+        if not isinstance(domain, (Lebesgue3D, Sobolev3D)):
             raise TypeError(
                 f"SOLAOperator3D requires a Lebesgue3D or Sobolev3D domain, "
                 f"got {type(domain).__name__!r}."
@@ -217,12 +212,12 @@ class SOLAOperator3D(LinearOperator):
                         f"PathIntegralFunctional (LinearForm subclass); "
                         f"got {type(kernel).__name__!r}."
                     )
-                if kernel.domain is not self._lebesgue_domain and kernel.domain is not domain:
+                if kernel.domain is not domain:
                     raise ValueError(
-                        f"kernels[{i}].domain is not the same Lebesgue3D "
-                        "instance as the operator domain (identity check).  "
+                        f"kernels[{i}].domain is not the same space instance "
+                        "as the operator domain (identity check).  "
                         "Build each kernel form with the exact same "
-                        "Lebesgue3D object (or Sobolev3D) passed as 'domain' here."
+                        "Lebesgue3D or Sobolev3D object passed as 'domain' here."
                     )
             self._provider = None
             self._kernels = kernels_list
@@ -341,12 +336,11 @@ class SOLAOperator3D(LinearOperator):
         :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D` (i.e. when the
         measurement forms are all ``VolumeKernel3D``).
 
-        When path-integral forms are used with a plain
-        :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` domain the dual
-        result is a :class:`~pygeoinf3d.spaces.forms.PathIntegralFunctional`
-        or :class:`~pygeoinf3d.spaces.forms.SumLinearForm`,
-        which ``Lebesgue3D.from_dual`` cannot represent.  A ``TypeError``
-        is raised with guidance to use a ``Sobolev3D`` domain (Phase 5).
+        When path-integral forms are used, the domain must be a
+        :class:`~pygeoinf3d.spaces.sobolev.Sobolev3D` whose *inverse_weight*
+        is a :class:`~pygeoinf3d.operators.base.SpectralOperator3D` (e.g.
+        ``BesselSobolevBox``).  If the ``Sobolev3D`` uses a non-spectral
+        weight, ``from_dual`` raises :exc:`TypeError` with guidance.
 
         Args:
             y: An element of the codomain.
@@ -363,19 +357,7 @@ class SOLAOperator3D(LinearOperator):
         """
         yp = self.codomain.to_dual(y)
         xp = self._dual_mapping(yp)
-        try:
-            return self.domain.from_dual(xp)
-        except TypeError:
-            raise TypeError(
-                f"SOLAOperator3D adjoint: domain.from_dual received a "
-                f"{type(xp).__name__!r}, which is not representable in a "
-                "plain Lebesgue3D space.  "
-                "When path-integral forms are used, the adjoint requires a "
-                "Sobolev3D domain that provides path-integral representers "
-                "(not a plain Lebesgue3D).  "
-                "Set domain to a Sobolev3D instance with a SpectralOperator3D "
-                "weight (e.g. BesselSobolevBox) to enable adjoint evaluation."
-            ) from None
+        return self.domain.from_dual(xp)
 
     # ------------------------------------------------------------------
     # Public accessors

@@ -43,6 +43,7 @@ from pygeoinf.linear_forms import LinearForm
 from pygeoinf.linear_operators import LinearOperator
 from pygeoinf3d.geometries.box.domain import BoxDomain
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+from pygeoinf3d.spaces.sobolev import Sobolev3D
 from pygeoinf3d.spaces.forms import VolumeKernel3D
 from pygeoinf3d.core.functions import Function3D
 from pygeoinf3d.operators.sola import SOLAOperator3D
@@ -291,7 +292,7 @@ class TestSOLAValidation:
         m_on_b = VolumeKernel3D(space_b, const_fn(unit_box, 1.0))
         codomain = EuclideanSpace(1)
 
-        with pytest.raises(ValueError, match="same Lebesgue3D instance"):
+        with pytest.raises(ValueError, match="same space instance"):
             SOLAOperator3D(space_a, codomain, [m_on_b])
 
     def test_sola_rejects_non_lebesgue_domain(self):
@@ -671,19 +672,47 @@ class TestPhase4PublicAPIExports:
 # Phase 5 tests: PathIntegralFunctional as SOLA kernels
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Helper for TestSOLAOperator3DWithPathFunctionals
+# ---------------------------------------------------------------------------
+
+def _make_sobolev_from_lebesgue(space: Lebesgue3D, alpha: float = 2.0) -> Sobolev3D:
+    """Wrap *space* in a Sobolev3D with a simple scalar-multiple weight.
+
+    W = alpha * I,  W^{-1} = (1/alpha) * I.  Not spectral.
+    """
+    a = float(alpha)
+    inv_a = 1.0 / a
+
+    def _scale(f: Function3D) -> Function3D:
+        return Function3D(f.domain, evaluate_callable=lambda x: a * f(x))
+
+    def _inv_scale(f: Function3D) -> Function3D:
+        return Function3D(f.domain, evaluate_callable=lambda x: inv_a * f(x))
+
+    weight = LinearOperator(space, space, _scale, adjoint_mapping=_scale)
+    inv_weight = LinearOperator(space, space, _inv_scale, adjoint_mapping=_inv_scale)
+    return Sobolev3D(space, weight, inv_weight)
+
+
 class TestSOLAOperator3DWithPathFunctionals:
     """SOLAOperator3D accepts PathIntegralFunctional as measurement forms.
 
-    Covers (Phase 5):
-    - Construction with a list of PathIntegralFunctional succeeds
+    Covers (Phase 3 domain contracts):
+    - Construction with a list of PathIntegralFunctional on Sobolev3D succeeds
     - Forward map with constant function: A(f)[i] = c * arclength_i
     - Dual of a unit codomain dual gives a scalar multiple of PathIntegralFunctional
-    - Adjoint raises TypeError with a Phase 5 / Sobolev3D hint message (2-form stack)
-    - Mixing VolumeKernel3D and PathIntegralFunctional in the same list is accepted
-    - Backward compatibility: VolumeKernel3D workflows are unchanged
+    - Adjoint raises TypeError (SpectralOperator3D not available) for non-spectral weight
+    - Mixing VolumeKernel3D and PathIntegralFunctional on the same Sobolev3D is accepted
+    - Backward compatibility: VolumeKernel3D workflows on Lebesgue3D are unchanged
     """
 
-    def test_accepts_path_integral_functionals(self, unit_box, space):
+    @pytest.fixture
+    def sobolev_space(self, space):
+        """Sobolev3D wrapping the module-level Lebesgue3D space fixture."""
+        return _make_sobolev_from_lebesgue(space)
+
+    def test_accepts_path_integral_functionals(self, unit_box, sobolev_space):
         """SOLAOperator3D construction with PathIntegralFunctional list succeeds."""
         from pygeoinf3d.spaces.forms import PathIntegralFunctional
         from pygeoinf3d.core.paths import Path3D
@@ -694,16 +723,16 @@ class TestSOLAOperator3DWithPathFunctionals:
         path_b = Path3D.from_polyline(
             np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
         )
-        form_a = PathIntegralFunctional(space, path_a)
-        form_b = PathIntegralFunctional(space, path_b)
+        form_a = PathIntegralFunctional(sobolev_space, path_a)
+        form_b = PathIntegralFunctional(sobolev_space, path_b)
 
         codomain = EuclideanSpace(2)
-        op = SOLAOperator3D(space, codomain, [form_a, form_b])
+        op = SOLAOperator3D(sobolev_space, codomain, [form_a, form_b])
 
         assert isinstance(op, LinearOperator)
         assert op.codomain.dim == 2
 
-    def test_forward_path_integral_constant_fn(self, unit_box, space):
+    def test_forward_path_integral_constant_fn(self, unit_box, sobolev_space):
         """Forward map with constant f=c gives c * arclength for each path.
 
         Path a: (0,0,0)→(1,0,0), arclength = 1.0  → ℓ_a(c) = c * 1.0
@@ -718,12 +747,12 @@ class TestSOLAOperator3DWithPathFunctionals:
         path_b = Path3D.from_polyline(
             np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
         )
-        form_a = PathIntegralFunctional(space, path_a)
-        form_b = PathIntegralFunctional(space, path_b)
+        form_a = PathIntegralFunctional(sobolev_space, path_a)
+        form_b = PathIntegralFunctional(sobolev_space, path_b)
 
         c = 3.0
         codomain = EuclideanSpace(2)
-        op = SOLAOperator3D(space, codomain, [form_a, form_b])
+        op = SOLAOperator3D(sobolev_space, codomain, [form_a, form_b])
 
         f = const_fn(unit_box, c)
         y = op(f)
@@ -731,7 +760,7 @@ class TestSOLAOperator3DWithPathFunctionals:
         npt.assert_allclose(y[0], c * path_a.arclength, rtol=1e-3, atol=1e-3)
         npt.assert_allclose(y[1], c * path_b.arclength, rtol=1e-3, atol=1e-3)
 
-    def test_dual_mapping_path_functionals(self, unit_box, space):
+    def test_dual_mapping_path_functionals(self, unit_box, sobolev_space):
         """Dual of a unit codomain dual returns a scalar PathIntegralFunctional.
 
         With a single PathIntegralFunctional and yp with component [c],
@@ -744,10 +773,10 @@ class TestSOLAOperator3DWithPathFunctionals:
         path = Path3D.from_polyline(
             np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
         )
-        form = PathIntegralFunctional(space, path)
+        form = PathIntegralFunctional(sobolev_space, path)
 
         codomain = EuclideanSpace(1)
-        op = SOLAOperator3D(space, codomain, [form])
+        op = SOLAOperator3D(sobolev_space, codomain, [form])
 
         c = 2.5
         yp = LinearForm(codomain, components=np.array([c]))
@@ -759,7 +788,7 @@ class TestSOLAOperator3DWithPathFunctionals:
         f = const_fn(unit_box, 1.0)
         npt.assert_allclose(xp(f), c * form(f), rtol=1e-6, atol=1e-6)
 
-    def test_dual_mapping_multi_path_returns_sum_form(self, unit_box, space):
+    def test_dual_mapping_multi_path_returns_sum_form(self, unit_box, sobolev_space):
         """Dual of a 2-path stack returns a SumLinearForm."""
         from pygeoinf3d.spaces.forms import PathIntegralFunctional, SumLinearForm
         from pygeoinf3d.core.paths import Path3D
@@ -770,11 +799,11 @@ class TestSOLAOperator3DWithPathFunctionals:
         path_b = Path3D.from_polyline(
             np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
         )
-        form_a = PathIntegralFunctional(space, path_a)
-        form_b = PathIntegralFunctional(space, path_b)
+        form_a = PathIntegralFunctional(sobolev_space, path_a)
+        form_b = PathIntegralFunctional(sobolev_space, path_b)
 
         codomain = EuclideanSpace(2)
-        op = SOLAOperator3D(space, codomain, [form_a, form_b])
+        op = SOLAOperator3D(sobolev_space, codomain, [form_a, form_b])
 
         yp = LinearForm(codomain, components=np.array([1.0, 2.0]))
         xp = op.dual(yp)
@@ -784,16 +813,12 @@ class TestSOLAOperator3DWithPathFunctionals:
         expected = 1.0 * form_a(f) + 2.0 * form_b(f)
         npt.assert_allclose(xp(f), expected, rtol=1e-6, atol=1e-6)
 
-    def test_adjoint_path_functionals_raises_clear_error(self, unit_box, space):
-        """Adjoint with two path-integral forms on a plain Lebesgue3D raises
-        TypeError with a helpful message pointing to Sobolev3D representers.
+    def test_adjoint_path_functionals_raises_clear_error(self, unit_box, sobolev_space):
+        """Adjoint with path forms on a non-spectral Sobolev3D raises TypeError.
 
-        Uses two path forms (n>1) so the dual returns a SumLinearForm rather
-        than a single PathIntegralFunctional — confirming the adjoint error
-        fires for both the single and multi-form path cases.
-        Phase 5 implements the representer when domain is Sobolev3D; a plain
-        Lebesgue3D domain still raises because Lebesgue3D.from_dual only
-        handles VolumeKernel3D.
+        The Sobolev3D fixture uses a plain scaling weight (not SpectralOperator3D).
+        Sobolev3D.from_dual Branch 3 requires SpectralOperator3D for path-form
+        representers, so the adjoint raises TypeError with a clear message.
         """
         from pygeoinf3d.spaces.forms import PathIntegralFunctional
         from pygeoinf3d.core.paths import Path3D
@@ -804,35 +829,37 @@ class TestSOLAOperator3DWithPathFunctionals:
         path_b = Path3D.from_polyline(
             np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
         )
-        form_a = PathIntegralFunctional(space, path_a)
-        form_b = PathIntegralFunctional(space, path_b)
+        form_a = PathIntegralFunctional(sobolev_space, path_a)
+        form_b = PathIntegralFunctional(sobolev_space, path_b)
 
         codomain = EuclideanSpace(2)
-        op = SOLAOperator3D(space, codomain, [form_a, form_b])
+        op = SOLAOperator3D(sobolev_space, codomain, [form_a, form_b])
 
         y = np.array([1.0, 1.0])
-        with pytest.raises(TypeError, match="Sobolev3D"):
+        with pytest.raises(TypeError, match="SpectralOperator3D"):
             op.adjoint(y)
 
-    def test_mixed_form_types_accepted(self, unit_box, space):
-        """Mixing VolumeKernel3D and PathIntegralFunctional is now accepted.
+    def test_mixed_form_types_accepted(self, unit_box, sobolev_space):
+        """Mixing VolumeKernel3D and PathIntegralFunctional on the same
+        Sobolev3D is accepted.
 
-        Construction must succeed and the forward map must evaluate each form
-        correctly: VolumeKernel3D gives a volume integral, PathIntegralFunctional
-        gives a path integral.
+        Both forms must have ``domain is sobolev_space``.  Construction must
+        succeed and the forward map must evaluate each form correctly:
+        VolumeKernel3D gives a volume integral, PathIntegralFunctional gives
+        a path integral.
         """
         from pygeoinf3d.spaces.forms import PathIntegralFunctional
         from pygeoinf3d.core.paths import Path3D
 
-        vk = VolumeKernel3D(space, const_fn(unit_box, 1.0))
+        vk = VolumeKernel3D(sobolev_space, const_fn(unit_box, 1.0))
         path = Path3D.from_polyline(
             np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
         )
-        pif = PathIntegralFunctional(space, path)
+        pif = PathIntegralFunctional(sobolev_space, path)
 
         codomain = EuclideanSpace(2)
         # Construction must not raise
-        op = SOLAOperator3D(space, codomain, [vk, pif])
+        op = SOLAOperator3D(sobolev_space, codomain, [vk, pif])
         assert isinstance(op, LinearOperator)
 
         # Forward: constant f=2.0
