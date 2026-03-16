@@ -1,10 +1,10 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are complete and archived. **`Sobolev3D` Phase 1 is complete** inside the active continuous path-integral Sobolev inversion plan. **`Path3D` Phase 2 is complete** (callable, polyline, and point-sample constructors; normalized arc-length parameterization; 25 tests). **`PathIntegralFunctional` Phase 3 is complete** (path-integral linear form; composite trapezoidal quadrature; scalar algebra; domain/type validation; 30 tests). **`SOLAOperator3D` Phase 4 + Phase 4 Revision is complete** (generalized to accept any `LinearForm` subclass — `VolumeKernel3D` or `PathIntegralFunctional` — including mixed stacks; dual returns `SumLinearForm` for multi-path and mixed stacks; adjoint error for unsupported forms on plain `Lebesgue3D`; 6+9 tests). **`SumLinearForm` is complete** (weighted sum composite form; basis-free evaluation; 9 tests). **`Sobolev3D.from_dual` Phase 5 is complete** (spectral representer formula for general `LinearForm`; recursive `SumLinearForm` branch; 8 new tests; `SOLAOperator3D` accepts `Sobolev3D` domain; end-to-end `path_integral_minimum_norm_demo.py`). The entire continuous path-integral Sobolev inversion plan is now complete. `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula; `Sobolev3D` is a first-class Hilbert space wrapping `Lebesgue3D` + a weight operator. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the remaining active architecture track. A full 6-notebook demo suite is committed. **`plot_paths3d_interactive` Phase 1 is complete** (Plotly-based interactive 3D path viewer in `plot.py`; exported from top-level `__init__`; targeted tests cover single/multi-path smoke, Plotly ImportError, n_samples validation, label mismatch, non-Path3D inputs, and optional domain box; `interactive-3d-path-visualization-plan.md` Phase 1 done). **`sobolev-path-form-domain-refactor-plan.md` Phase 1 is complete** (`PathIntegralFunctional` now requires `Sobolev3D` domain and rejects `Lebesgue3D`; `SumLinearForm` generalized to accept any `HilbertSpace` domain; `Sobolev3D.from_dual` accepts forms on `self` or `self.base_space`; minimal `SOLAOperator3D` kernel-domain check updated; 88 targeted tests pass; 6 SOLA path-form tests remain broken pending Phase 3 SOLA domain-contract cleanup).
+> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are complete and archived. **`Sobolev3D` Phase 1 is complete** inside the active continuous path-integral Sobolev inversion plan. **`Path3D` Phase 2 is complete** (callable, polyline, and point-sample constructors; normalized arc-length parameterization; 25 tests). **`PathIntegralFunctional` Phase 3 is complete** (path-integral linear form; composite trapezoidal quadrature; scalar algebra; domain/type validation; 30 tests). **`SOLAOperator3D` Phase 4 + Phase 4 Revision is complete** (generalized to accept any `LinearForm` subclass — `VolumeKernel3D` or `PathIntegralFunctional` — including mixed stacks; dual returns `SumLinearForm` for multi-path and mixed stacks; 6+9 tests). **`SumLinearForm` is complete** (weighted sum composite form; basis-free evaluation; 9 tests). **`Sobolev3D.from_dual` Phase 5 is complete** (spectral representer formula for general `LinearForm`; recursive `SumLinearForm` branch; 8 new tests; end-to-end `path_integral_minimum_norm_demo.py`). **`sobolev-path-form-domain-refactor-plan.md` Phases 1–4 are complete and archived:** (1) `PathIntegralFunctional` requires `Sobolev3D` and rejects `Lebesgue3D`; `SumLinearForm` accepts any `HilbertSpace` domain. (2) `Sobolev3D.to_dual` returns duals anchored on `self`; all `from_dual` branches enforce strict `fp.domain is not self`. (3) `SOLAOperator3D` enforces `kernel.domain is domain`; `Sobolev3D` is a first-class domain; `_lebesgue_domain` bridge removed. (4) Living reference and canonical code examples updated. All 792 tests pass. The entire continuous path-integral Sobolev inversion plan is now complete. `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula; `Sobolev3D` is a first-class Hilbert space wrapping `Lebesgue3D` + a weight operator. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the remaining active architecture track. A full 6-notebook demo suite is committed. **`plot_paths3d_interactive` Phase 1 is complete** (Plotly-based interactive 3D path viewer in `plot.py`; exported from top-level `__init__`; targeted tests cover single/multi-path smoke, Plotly ImportError, n_samples validation, label mismatch, non-Path3D inputs, and optional domain box; `interactive-3d-path-visualization-plan.md` Phase 1 done).
 >
-> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5); `sobolev-path-form-domain-refactor-plan.md` (phases 2–4 pending).
+> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5).
 >
-> **Last updated:** 2026-03-16 (sobolev-path-form-domain-refactor Phase 1 complete)
+> **Last updated:** 2026-03-16 (sobolev-path-form-domain-refactor all 4 phases complete)
 
 ---
 
@@ -13,7 +13,7 @@
 | Plan | Status |
 |------|--------|
 | `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` | **Active** — phases 3–5 in progress |
-| `sobolev-path-form-domain-refactor-plan.md` | **Active** — Phase 1 complete; phases 2–4 pending |
+| `sobolev-path-form-domain-refactor-plan.md` | **Complete** — all 4 phases done; archived to `completed-plans/` |
 | `continuous-path-integral-sobolev-inversion-plan.md` | **Complete** — all 5 phases done; archived to `completed-plans/` |
 | `bessel-sobolev-box-plan.md` | **Complete** — archived to `completed-plans/` |
 
@@ -75,52 +75,41 @@ plot_function3d_axis_slice(kprov.get_kernel(0).kernel, axis='z', coord=0.0)
     synced three-panel comparison of the true model, least-norm solution, and
     absolute total kernel sensitivity via `compare_function3d_axis_sliders`.
 
-**Line-integral kernels (Phase 4 addition):**
-`PathIntegralFunctional` (Phase 3 of the path-integral plan) is now a fully
-supported measurement form type in `SOLAOperator3D`.  You can pass a list of
-`PathIntegralFunctional` objects to model path-averaged travel times:
+**Line-integral kernels — corrected domain contract (sobolev-path-form-domain-refactor, all 4 phases):**
+
+`PathIntegralFunctional` **requires a `Sobolev3D` domain** — passing a plain `Lebesgue3D` raises `TypeError`.
+`SumLinearForm` accepts **any `HilbertSpace` domain**.
+`VolumeKernel3D` accepts both `Lebesgue3D` and `Sobolev3D` as *space* (duck-typed via `space.function_domain`).
+`Sobolev3D.to_dual(f)` returns `VolumeKernel3D(self, W·f)` — the dual is anchored on `self`, not on `base_space`.
+`Sobolev3D.from_dual` enforces strict `fp.domain is self` across all three branches.
+`SOLAOperator3D` accepts a `Lebesgue3D` **or** `Sobolev3D` domain; all kernel forms must have `kernel.domain is domain` (strict identity).
 
 ```python
-from pygeoinf3d.spaces.forms import PathIntegralFunctional
-from pygeoinf3d.core.paths import Path3D
-
-paths = [Path3D.from_polyline(wp) for wp in waypoints_list]
-forms = [PathIntegralFunctional(space, p) for p in paths]
-op = SOLAOperator3D(space, EuclideanSpace(len(forms)), forms)
-y = op(f)   # [ℓ_γ1(f), ℓ_γ2(f), …]
-```
-
-**Adjoint limitation:** `op.adjoint(y)` raises `TypeError` (with a helpful
-Phase 5 message) when path-integral forms are used on a plain `Lebesgue3D`.
-Phase 5 will introduce representer logic via a `Sobolev3D` domain.
-
-**Line-integral kernels — updated domain contract (Phase 1 of sobolev-path-form-domain-refactor):**
-`PathIntegralFunctional` now **requires a `Sobolev3D` domain** (passing a plain `Lebesgue3D` raises `TypeError`).
-`SumLinearForm` now accepts **any `HilbertSpace` domain** (previously required `Lebesgue3D`).
-`Sobolev3D.from_dual` now accepts forms whose `.domain is self` (Sobolev3D) in addition to `.domain is self.base_space`.
-`SOLAOperator3D` sequence-mode kernel validation also accepts forms on the actual operator domain (`Sobolev3D`) in addition to the extracted `Lebesgue3D` base space.
-
-```python
-from pygeoinf3d.spaces.forms import PathIntegralFunctional
+from pygeoinf3d.spaces.forms import PathIntegralFunctional, VolumeKernel3D
 from pygeoinf3d.spaces.sobolev import Sobolev3D
+from pygeoinf3d.operators.sola import SOLAOperator3D
 from pygeoinf3d.core.paths import Path3D
+from pygeoinf import EuclideanSpace
 
-# Phase 1: PathIntegralFunctional requires Sobolev3D, not Lebesgue3D
+# 1. Build a Sobolev space on top of a Lebesgue space
+#    (BesselSobolevBox provides a SpectralOperator3D weight — required for adjoint)
+sobolev = BesselSobolevBox(lebesgue, order=1.0)  # or any Sobolev3D
+
+# 2. Path-integral measurement forms live on the Sobolev domain
 paths = [Path3D.from_polyline(wp) for wp in waypoints_list]
-forms = [PathIntegralFunctional(sobolev, p) for p in paths]   # sobolev is Sobolev3D
+forms = [PathIntegralFunctional(sobolev, p) for p in paths]
+# Volume kernels can also live on Sobolev3D:
+# vk = VolumeKernel3D(sobolev, kernel_fn)
+
+# 3. SOLA operator: domain must match kernel form domains
 op = SOLAOperator3D(sobolev, EuclideanSpace(len(forms)), forms)
-y = op(f)   # [ℓ_γ1(f), ℓ_γ2(f), …]
-adj_y = op.adjoint(y_vec)   # Function3D representer (requires SpectralOperator3D weight)
+y = op(f)            # forward: [ℓ_γ1(f), ℓ_γ2(f), …]
+adj_y = op.adjoint(np.ones(len(forms)))  # representer (requires SpectralOperator3D weight)
 ```
 
-**Adjoint limitation (Phase 1):** `op.adjoint(y)` requires `inverse_weight` to be a
-`SpectralOperator3D` (e.g. `BesselSobolevBox`).  A `TypeError` with a helpful message is
-raised otherwise.
-
-**SOLA path-form tests deferred:** 6 tests in `TestSOLAOperator3DWithPathFunctionals`
-(in `tests/operators/test_sola.py`) that previously constructed `PathIntegralFunctional`
-on a plain `Lebesgue3D` now fail correctly.  These will be updated in Phase 3 of the
-`sobolev-path-form-domain-refactor-plan`.
+**Adjoint:** `op.adjoint(y)` works when `domain` is a `Sobolev3D` whose `inverse_weight` is a
+`SpectralOperator3D` (e.g. `BesselSobolevBox`).  With a non-spectral weight, `Sobolev3D.from_dual`
+raises `TypeError` with a message pointing to `SpectralOperator3D`.
 
 **Remaining non-implemented kernel types:**
 - *Surface-integral kernels* — flux measurements or boundary data
@@ -172,7 +161,8 @@ pygeoinf3D/
 │   │   ├── __init__.py      # Re-exports Lebesgue3D, VolumeKernel3D, PathIntegralFunctional, SumLinearForm, Sobolev3D
 │   │   ├── forms.py         # VolumeKernel3D, PathIntegralFunctional, SumLinearForm  ← Phase 2 / Sobolev-inversion Phase 3+4R
 │   │   ├── lebesgue.py      # Lebesgue3D  ← Phase 2, updated Phase 4
-│   │   └── sobolev.py       # Sobolev3D  ← Sobolev-inversion Phase 1+5 (Phase 5: 3-branch from_dual with spectral representer)
+│   │   └── sobolev.py       # Sobolev3D  ← Sobolev-inversion Phase 1+5, sobolev-path-form-domain-refactor Phases 2–4
+                                          #   to_dual → VolumeKernel3D(self, W·f); from_dual strict fp.domain is self
 │   ├── geometries/
 │   │   ├── __init__.py
 │   │   └── box/
@@ -195,7 +185,8 @@ pygeoinf3D/
 │   │   ├── inverse_laplacian_box.py  # InverseBoxLaplacian  ← pseudoinverse mode delegates to GeneralizedBoxLaplacian(power=-1); shift/strict use own apply — Phase 3
 │   │   ├── generalized_box_laplacian.py  # GeneralizedBoxLaplacian (full impl, inherits SpectralPowerBase3D)  ← generalized-box-laplacian Phases 1–2
 │   │   ├── bessel_sobolev_box.py  # BesselSobolevBox (shifted spectral weights with real order)  ← bessel-sobolev-box-plan
-│   │   └── sola.py            # SOLAOperator3D  ← SOLA Phase 1+2+3+4+4R+5 (Phase 5: accepts Sobolev3D domain; _lebesgue_domain routing)
+│   │   └── sola.py            # SOLAOperator3D  ← SOLA Phase 1+2+3+4+4R+5, sobolev-path-form-domain-refactor Phase 3
+                                          #   domain: Lebesgue3D | Sobolev3D; strict kernel.domain is domain check
 │   ├── sampling/              # KL expansion sampler  ← spectral-kl plan
 │   │   ├── __init__.py        # Re-exports KLSampler3D
 │   │   └── kl_sampler.py      # KLSampler3D
@@ -218,8 +209,8 @@ pygeoinf3D/
 │   ├── spaces/
 │   │   ├── __init__.py
 │   │   ├── test_lebesgue.py          ← Phase 2, extended Phase 4
-│   │   ├── test_sobolev.py           ← Sobolev-inversion Phase 1+5 (48 tests: 40 original + 8 spectral representer)
-│   │   └── test_path_integral_functional.py  ← Sobolev-inversion Phase 3 (25 tests)
+│   │   ├── test_sobolev.py           ← Sobolev-inversion Phase 1+5, sobolev-path-form-domain-refactor Phases 2+4 (48 tests)
+│   │   └── test_path_integral_functional.py  ← Sobolev-inversion Phase 3, sobolev-path-form-domain-refactor Phase 1 (40 tests)
 │   ├── geometries/
 │   │   ├── __init__.py
 │   │   └── test_box_domain.py        ← Phase 3
@@ -234,7 +225,7 @@ pygeoinf3D/
 │   │   ├── test_inverse_box_laplacian.py  ← InverseLaplacian plan + spectral interface (37 tests)
 │   │   ├── test_generalized_box_laplacian.py  ← GeneralizedBoxLaplacian plan Phases 1-4 (54 tests)
 │   │   ├── test_bessel_sobolev_box.py    ← bessel-sobolev-box-plan Phase 2 (40 tests)
-│   │   └── test_sola.py              ← SOLA Phase 1+2+3+4
+│   │   └── test_sola.py              ← SOLA Phase 1+2+3+4, sobolev-path-form-domain-refactor Phase 3 (36 tests; all path-form tests use Sobolev3D)
 │   ├── sampling/
 │   │   ├── __init__.py
 │   │   ├── test_kl_sampler.py        ← spectral-kl plan + GeneralizedBoxLaplacian integration (47 tests)
