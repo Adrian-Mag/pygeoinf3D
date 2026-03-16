@@ -1,8 +1,8 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, and `GeneralizedBoxLaplacian` (all 5 phases including docs/archive) are **complete and archived**. `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the one remaining active track. A full 6-notebook demo suite (`1_box_domain`, `2_functions`, `3_lebesgue_space`, `3.1_kernel_functionals`, `4_providers`, `6_laplacian`) is now complete and committed.
+> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are **complete and archived**. `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula and is the building block for a future `Sobolev3D` wrapper. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the one remaining active track. A full 6-notebook demo suite (`1_box_domain`, `2_functions`, `3_lebesgue_space`, `3.1_kernel_functionals`, `4_providers`, `6_laplacian`) is now complete and committed.
 >
-> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5 — backend integration, operator wiring, end-to-end demos); `bessel-sobolev-box-plan.md` (active — implementation/testing track).
+> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5 — backend integration, operator wiring, end-to-end demos).
 >
 > **Last updated:** 2026-03-16
 
@@ -13,7 +13,7 @@
 | Plan | Status |
 |------|--------|
 | `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` | **Active** — phases 3–5 in progress |
-| `bessel-sobolev-box-plan.md` | **Active** — operator implementation/testing in progress |
+| `bessel-sobolev-box-plan.md` | **Complete** — archived to `completed-plans/` |
 
 All other plans (foundation, SOLA, volumetric-kernel-providers, least-norm demo, synced-slice comparison, KL fast-path plot, InverseBoxLaplacian, SpectralOperator3D KL sampler, GeneralizedBoxLaplacian all 5 phases, plan-reference-cleanup, interactive-slice-slider) have been moved to `completed-plans/`.
 
@@ -1260,6 +1260,95 @@ GeneralizedBoxLaplacian(space: Lebesgue3D,
 
 ---
 
+### `BesselSobolevBox` — `pygeoinf3d.operators.bessel_sobolev_box`
+
+*(Phase 2 complete — full spectral projection implemented and tested. Phase 3 complete — documented and archived.)*
+
+Real-order shifted spectral operator on a box: $(\mathrm{shift} - \Delta)^{s/2}$ in the eigenfunction basis. Inherits from `SpectralPowerBase3D`. Self-adjoint.
+
+```python
+BesselSobolevBox(
+    space: Lebesgue3D,
+    provider: TensorProductProvider,
+    *,
+    shift: float,
+    order: float,
+    quad_resolution: int = 20,
+)
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `space` | `Lebesgue3D` | Function space and operator domain/codomain |
+| `provider` | `TensorProductProvider` | Eigenfunction/eigenvalue source; box must match `space.function_domain` |
+| `shift` | `float` | Strictly positive shift added to each Laplacian eigenvalue before exponentiation; must satisfy `shift > 0` |
+| `order` | `float` | Real exponent $s$; any real float including non-integer and negative values |
+| `quad_resolution` | `int` (default `20`) | Resolution for `BoxDomain.structured_mesh` used in $L^2$ projection |
+
+**Eigenvalue formula:**
+$$\mu_k = (\mathrm{shift} + \lambda_k)^{s/2}$$
+where $\lambda_k$ are the Laplacian eigenvalues from `provider` and $s$ = `order`.
+
+**Key properties:**
+
+| Property | Description |
+|----------|-------------|
+| `.shift` | The positive shift value (`float`) |
+| `.order` | The real exponent $s$ (`float`) |
+
+**Key method — `_apply(f) → Function3D`:**
+1. Evaluate `f` at the pre-computed quadrature mesh once.
+2. `c_k = ⟨f, Φ_k⟩ ≈ Σ_i f(x_i) Φ_k(x_i) w_i` for each mode.
+3. Return `Function3D` evaluating `Σ_k μ_k c_k Φ_k(x)` via closure.
+
+Quadrature mesh/weights and all eigenfunction callables are pre-computed at construction.
+
+**Special-case equivalences:**
+
+| `order` | Eigenvalue | Interpretation |
+|---------|-----------|----------------|
+| `0` | `1.0` for every mode | Identity operator |
+| `2` | `shift + λ_k` | Resolvent numerator — spectral realisation of $(\mathrm{shift} - \Delta)$ |
+| `-2` | `1 / (shift + λ_k)` | Green's function / resolvent of $(\mathrm{shift} - \Delta)$ |
+| `s` paired with `-s` | inverse pair | `BesselSobolevBox(order=s)` ∘ `BesselSobolevBox(order=-s)` ≈ identity |
+
+**Validation:**
+- `shift <= 0` → `ValueError` (must be strictly positive).
+- `provider._box is not space.function_domain` → `ValueError`.
+- `shift` non-finite → `ValueError`.
+
+**Why `shift > 0` is required:** Requiring a strictly positive shift guarantees
+$\mathrm{shift} + \lambda_k > 0$ for **all** modes — including the Neumann zero mode
+$\lambda_0 = 0$. This avoids any singularity for negative `order`, eliminating the
+need for a special-case pseudoinverse projection that `GeneralizedBoxLaplacian` requires
+for negative `power`.
+
+**Future role (Sobolev wrapper):** `BesselSobolevBox` is the building block for a future
+`Sobolev3D` wrapper — a `HilbertSpace` whose inner-product norm is
+$\|(\mathrm{shift} - \Delta)^{s/2} f\|_{L^2}$. The Sobolev space can be constructed via
+`pygeoinf.OperatorWeightedHilbertSpace` wrapping this operator as the mass operator.
+
+```python
+import numpy as np
+from pygeoinf3d import BoxDomain, Lebesgue3D, TensorProductProvider, BesselSobolevBox
+
+box      = BoxDomain(np.zeros(3), np.ones(3))
+space    = Lebesgue3D(box)
+provider = TensorProductProvider(box, truncation=(4, 4, 4), bc_type='neumann')
+
+# Sobolev-½ smoothing  →  (1 + λ_k)^(1/2)
+op = BesselSobolevBox(space, provider, shift=1.0, order=1.0)
+
+# Its inverse            →  (1 + λ_k)^(-1/2)   (no singularity even for Neumann)
+op_inv = BesselSobolevBox(space, provider, shift=1.0, order=-1.0)
+```
+
+**Exported from:** `pygeoinf3d.operators`, `pygeoinf3d`.
+
+---
+
 ## Sampling
 
 ### `KLSampler3D` — `pygeoinf3d.sampling.kl_sampler`
@@ -1514,7 +1603,8 @@ from pygeoinf3d import (
 | ~~kernel-providers 2~~ | ~~`GaussianProvider3D`, `BumpProvider3D`, `BoxcarProvider3D` under `function_providers`~~ **DONE** |
 | ~~Phase 4 docs~~ | ~~Canonical workflow, volumetric boundary statement, README refresh, test counts~~ **DONE** |
 | ~~GeneralizedBoxLaplacian~~ | ~~`SpectralPowerBase3D` + `GeneralizedBoxLaplacian` for $(-\alpha\Delta)^s$, all 5 phases including docs and archive~~ **DONE** |
-| next | `Sobolev3D`, Bessel-Sobolev Phase 2 (action + ladder semantics), then Phase 3 (docs) |
+| ~~bessel-sobolev-box~~ | ~~`BesselSobolevBox` all 3 phases (shifted spectral weights, real order, docs/archive)~~ **DONE** |
+| next | `Sobolev3D` wrapper via `OperatorWeightedHilbertSpace` using `BesselSobolevBox` as mass operator |
 | 5 | `BallDomain` (StructuredDomain3D, spherical coordinates) |
 | 6 | Dual elements and geometric distributions (point/path/surface/volume) |
 | 7 | End-to-end inversion workflow demo |
@@ -1528,7 +1618,7 @@ Run with:
 conda run -n inferences3 python -m pytest tests/ -q
 ```
 
-**653 tests passing** (foundation Phases 1-3 + coefficient architecture Phases 1-2 + SOLA Phases 1-4 + kernel-providers Phases 1-2 + plot + spectral operators + `GeneralizedBoxLaplacian` all 5 phases):
+**653 tests passing** (foundation Phases 1-3 + coefficient architecture Phases 1-2 + SOLA Phases 1-4 + kernel-providers Phases 1-2 + plot + spectral operators + `GeneralizedBoxLaplacian` all 5 phases + `BesselSobolevBox` all 3 phases):
 - `tests/core/test_config.py` — 13 tests
 - `tests/core/test_region.py` — 14 tests
 - `tests/core/test_domain_base.py` — 21 tests
