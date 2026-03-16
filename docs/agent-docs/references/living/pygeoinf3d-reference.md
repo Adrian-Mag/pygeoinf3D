@@ -1,8 +1,8 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are complete and archived. **`Sobolev3D` Phase 1 is complete** inside the active continuous path-integral Sobolev inversion plan. **`Path3D` Phase 2 is complete** (callable, polyline, and point-sample constructors; normalized arc-length parameterization; 25 tests). `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula; `Sobolev3D` is a first-class Hilbert space wrapping `Lebesgue3D` + a weight operator. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the remaining active architecture track. A full 6-notebook demo suite is committed.
+> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are complete and archived. **`Sobolev3D` Phase 1 is complete** inside the active continuous path-integral Sobolev inversion plan. **`Path3D` Phase 2 is complete** (callable, polyline, and point-sample constructors; normalized arc-length parameterization; 25 tests). **`PathIntegralFunctional` Phase 3 is complete** (path-integral linear form; composite trapezoidal quadrature; scalar algebra; domain/type validation; 30 tests). `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula; `Sobolev3D` is a first-class Hilbert space wrapping `Lebesgue3D` + a weight operator. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the remaining active architecture track. A full 6-notebook demo suite is committed.
 >
-> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5); `continuous-path-integral-sobolev-inversion-plan.md` (phases 3–5).
+> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5); `continuous-path-integral-sobolev-inversion-plan.md` (phases 4–5).
 >
 > **Last updated:** 2026-03-16
 
@@ -13,7 +13,7 @@
 | Plan | Status |
 |------|--------|
 | `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` | **Active** — phases 3–5 in progress |
-| `continuous-path-integral-sobolev-inversion-plan.md` | **Active** — Phases 1–2 complete; phases 3–5 pending |
+| `continuous-path-integral-sobolev-inversion-plan.md` | **Active** — Phases 1–3 complete; phases 4–5 pending |
 | `bessel-sobolev-box-plan.md` | **Complete** — archived to `completed-plans/` |
 
 All other plans (foundation, SOLA, volumetric-kernel-providers, least-norm demo, synced-slice comparison, KL fast-path plot, InverseBoxLaplacian, SpectralOperator3D KL sampler, GeneralizedBoxLaplacian all 5 phases, plan-reference-cleanup, interactive-slice-slider) have been moved to `completed-plans/`.
@@ -137,8 +137,8 @@ pygeoinf3D/
 │   │   ├── functions.py     # Function3D  ← Phase 2
 │   │   └── paths.py         # Path3D  ← Sobolev-inversion Phase 2
 │   ├── spaces/
-│   │   ├── __init__.py      # Re-exports Lebesgue3D, VolumeKernel3D, Sobolev3D
-│   │   ├── forms.py         # VolumeKernel3D  ← Phase 2
+│   │   ├── __init__.py      # Re-exports Lebesgue3D, VolumeKernel3D, PathIntegralFunctional, Sobolev3D
+│   │   ├── forms.py         # VolumeKernel3D, PathIntegralFunctional  ← Phase 2 / Sobolev-inversion Phase 3
 │   │   ├── lebesgue.py      # Lebesgue3D  ← Phase 2, updated Phase 4
 │   │   └── sobolev.py       # Sobolev3D  ← Sobolev-inversion Phase 1
 │   ├── geometries/
@@ -186,7 +186,8 @@ pygeoinf3D/
 │   ├── spaces/
 │   │   ├── __init__.py
 │   │   ├── test_lebesgue.py          ← Phase 2, extended Phase 4
-│   │   └── test_sobolev.py           ← Sobolev-inversion Phase 1 revised (40 tests)
+│   │   ├── test_sobolev.py           ← Sobolev-inversion Phase 1 revised (40 tests)
+│   │   └── test_path_integral_functional.py  ← Sobolev-inversion Phase 3 (25 tests)
 │   ├── geometries/
 │   │   ├── __init__.py
 │   │   └── test_box_domain.py        ← Phase 3
@@ -525,6 +526,55 @@ parent's `_components` array, which is a fake `np.zeros(0)` placeholder in
 `VolumeKernel3D`.  These are overridden to mutate `self._kernel` instead.
 `__isub__` is also overridden for consistency (Python's default fallback to
 `__sub__` would silently rebind rather than mutate).
+
+---
+
+### `PathIntegralFunctional` — `pygeoinf3d.spaces.forms`
+
+A `LinearForm` on `Lebesgue3D` defined by path integration (composite trapezoidal quadrature).
+
+```python
+PathIntegralFunctional(space: Lebesgue3D, path: Path3D, *, n_quad: int = 200)
+```
+
+Inherits from `pygeoinf.LinearForm`.  Overrides `_mapping_impl` so that
+
+$$\ell_\gamma(f) = \int_\gamma f\,\mathrm{d}s \approx |\gamma|\cdot\frac{1}{n-1}\left[\frac{f(\mathbf{p}_0)}{2}+\sum_{i=1}^{n-2}f(\mathbf{p}_i)+\frac{f(\mathbf{p}_{n-1})}{2}\right]$$
+
+where $\mathbf{p}_0,\ldots,\mathbf{p}_{n-1}$ are equally arc-length-spaced endpoint-inclusive
+nodes from `path.arc_length_nodes(n_quad)`.
+
+**Constructor validation:**
+- `space` must be a `Lebesgue3D` instance; `path` must be a `Path3D` instance (both raise `TypeError` otherwise).
+- `n_quad` must be ≥ 2 (raises `ValueError` otherwise).
+- If `path.domain is not None`, it must be the **same object** (`is` check) as `space.function_domain`; otherwise `ValueError` is raised.  A path with `domain=None` is always accepted.
+
+| Member | Description |
+|--------|-------------|
+| `.path` | The stored `Path3D` object |
+| `.n_quad` | Number of quadrature nodes, ≥ 2 (`int`) |
+| `.domain` | The `Lebesgue3D` this form is defined on |
+| `.__call__(f)` | Returns `path.arclength * trapezoid(f(pts), t_arr)` as `float` |
+| `copy()` | New instance sharing the same immutable path |
+| `__neg__` / `__mul__` / `__rmul__` / `__truediv__` | Out-of-place scalar algebra via internal `_scale` |
+| `__add__` / `__sub__` | Allowed only for two `PathIntegralFunctional` objects sharing the same `path` and `space` (`is` checks); raises `TypeError`/`ValueError` otherwise |
+| `__imul__` / `__iadd__` / `__isub__` | In-place versions; same path-identity and space-identity guards for add/sub |
+
+**`_scale` implementation note:** a `_scale: float` field (default `1.0`) is stored
+internally.  Scalar operations return a new instance with the multiplied scale; the
+path object is never copied.  `__add__` and `__sub__` accumulate the scales of two
+functionals on the same path into a single new instance.
+
+**Algebra restrictions:** Adding a `PathIntegralFunctional` and a `VolumeKernel3D`
+raises `TypeError`.  Adding two `PathIntegralFunctional` objects on different
+`Path3D` instances raises `ValueError`.
+
+**Tests:** `tests/spaces/test_path_integral_functional.py` — 25 tests covering
+construction, domain validation, evaluation accuracy (constant/linear/circular-arc
+functions, arclength scaling, `n_quad` convergence), scalar algebra
+(`__neg__`, `__mul__`, `__rmul__`, `__truediv__`, `__add__`, `__sub__`),
+type errors for incompatible adds, different-path independence, and domain-match
+acceptance rules.
 
 ---
 

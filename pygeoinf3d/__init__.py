@@ -13,7 +13,7 @@ from .core.boundary import Boundary3D
 from .core.functions import Function3D
 from .core.paths import Path3D
 from .spaces.lebesgue import Lebesgue3D
-from .spaces.forms import VolumeKernel3D
+from .spaces.forms import VolumeKernel3D, PathIntegralFunctional
 from .spaces.sobolev import Sobolev3D
 
 # Phase 3 — Box geometry, tensor-product provider, spectral Laplacian
@@ -60,6 +60,7 @@ __all__ = [
     "Path3D",
     "Lebesgue3D",
     "VolumeKernel3D",
+    "PathIntegralFunctional",
     "Sobolev3D",
     # Phase 3 — Box geometry MVP
     "BoxDomain",
