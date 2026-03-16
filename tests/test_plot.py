@@ -6,6 +6,7 @@ from typing import Any, cast
 import pygeoinf3d.plot as plot_module
 
 from pygeoinf3d.core.functions import Function3D
+from pygeoinf3d.core.paths import Path3D
 from pygeoinf3d.geometries.box.domain import BoxDomain
 from pygeoinf3d.plot import (
     evaluate_function3d_on_axis_slice,
@@ -15,6 +16,7 @@ from pygeoinf3d.plot import (
     plot_function3d_volume_dropdown,
     plot_function3d_isosurface,
     compare_function3d_axis_sliders,
+    plot_paths3d_interactive,
 )
 
 
@@ -847,3 +849,167 @@ def test_plot_n_modes_threaded_through_axis_slider(kl_sampler):
 
     assert len(received) == 3
     assert all(pnm == 2 for pnm in received)
+
+
+# ---------------------------------------------------------------------------
+# Tests for plot_paths3d_interactive
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def straight_path():
+    """A simple straight-line Path3D along the main diagonal."""
+    waypoints = np.array([
+        [0.0, 0.0, 0.0],
+        [0.5, 0.5, 0.5],
+        [1.0, 1.0, 1.0],
+    ])
+    return Path3D.from_polyline(waypoints)
+
+
+@pytest.fixture
+def curved_path():
+    """A curved Path3D sampled from a semicircle in the xz-plane."""
+    waypoints = np.array([
+        [1.0, 0.5, 0.0],
+        [0.0, 0.5, 1.0],
+        [-1.0, 0.5, 0.0],
+    ])
+    return Path3D.from_polyline(waypoints)
+
+
+def test_plot_path3d_interactive_smoke(straight_path):
+    """Single Path3D: figure with at least one Scatter3d trace."""
+    go = pytest.importorskip("plotly.graph_objects")
+
+    fig = cast(Any, plot_paths3d_interactive(
+        straight_path,
+        n_samples=10,
+        show_markers=False,
+        show_plot=False,
+    ))
+
+    assert isinstance(fig, go.Figure)
+    scatter_traces = [t for t in fig.data if t.type == 'scatter3d']
+    assert len(scatter_traces) >= 1
+    # Path trace should have exactly n_samples points
+    assert len(scatter_traces[0].x) == 10
+    # Scene axes should be labelled
+    assert fig.layout.scene.xaxis.title.text == 'x'
+    assert fig.layout.scene.yaxis.title.text == 'y'
+    assert fig.layout.scene.zaxis.title.text == 'z'
+
+
+def test_plot_paths3d_interactive_multiple_paths(straight_path, curved_path):
+    """Multiple paths: exactly one Scatter3d line trace per path."""
+    go = pytest.importorskip("plotly.graph_objects")
+
+    fig = cast(Any, plot_paths3d_interactive(
+        [straight_path, curved_path],
+        n_samples=8,
+        show_markers=False,
+        show_plot=False,
+        labels=["Straight", "Curved"],
+    ))
+
+    assert isinstance(fig, go.Figure)
+    # With show_markers=False there is exactly one trace per path
+    scatter_traces = [t for t in fig.data if t.type == 'scatter3d']
+    assert len(scatter_traces) == 2
+    names = [t.name for t in scatter_traces]
+    assert "Straight" in names
+    assert "Curved" in names
+
+
+def test_plot_paths3d_interactive_requires_plotly(straight_path, monkeypatch):
+    """ImportError propagates when Plotly is not available."""
+    def _raise_import_error():
+        raise ImportError("plotly missing")
+
+    monkeypatch.setattr(
+        plot_module,
+        "_import_plotly_graph_objects",
+        _raise_import_error,
+    )
+
+    with pytest.raises(ImportError, match="plotly missing"):
+        plot_module.plot_paths3d_interactive(
+            straight_path,
+            show_plot=False,
+        )
+
+
+def test_plot_paths3d_interactive_validates_n_samples(straight_path):
+    """n_samples < 2 must raise ValueError."""
+    pytest.importorskip("plotly.graph_objects")
+
+    with pytest.raises(ValueError, match="n_samples"):
+        plot_paths3d_interactive(straight_path, n_samples=1, show_plot=False)
+
+    with pytest.raises(ValueError, match="n_samples"):
+        plot_paths3d_interactive(straight_path, n_samples=0, show_plot=False)
+
+
+def test_plot_paths3d_interactive_domain_box(straight_path, box_domain):
+    """show_domain_box=True with a domain produces a wireframe trace."""
+    go = pytest.importorskip("plotly.graph_objects")
+
+    path_with_domain = Path3D.from_polyline(
+        np.array([[0.1, 0.1, 0.1], [0.9, 0.9, 0.9]]),
+        domain=box_domain,
+    )
+
+    fig = cast(Any, plot_paths3d_interactive(
+        path_with_domain,
+        n_samples=5,
+        show_markers=False,
+        show_domain_box=True,
+        show_plot=False,
+    ))
+
+    assert isinstance(fig, go.Figure)
+    # Should have at least the path trace plus a box wireframe trace
+    assert len(fig.data) >= 2
+    trace_names = [t.name for t in fig.data]
+    assert any("box" in (n or "").lower() for n in trace_names)
+
+
+def test_plot_paths3d_interactive_no_domain_box_by_default(straight_path):
+    """Domain box is not shown by default (show_domain_box=False)."""
+    go = pytest.importorskip("plotly.graph_objects")
+
+    fig = cast(Any, plot_paths3d_interactive(
+        straight_path,
+        n_samples=5,
+        show_markers=False,
+        show_plot=False,
+    ))
+
+    assert isinstance(fig, go.Figure)
+    # Only the line trace; no extra box trace
+    assert len(fig.data) == 1
+
+
+def test_plot_paths3d_interactive_labels_length_mismatch(
+    straight_path, curved_path
+):
+    """labels list with wrong length raises ValueError."""
+    pytest.importorskip("plotly.graph_objects")
+
+    with pytest.raises(ValueError, match="same length"):
+        plot_paths3d_interactive(
+            [straight_path, curved_path],
+            labels=["Only one label"],
+            show_plot=False,
+        )
+
+
+def test_plot_paths3d_interactive_non_path3d_element(straight_path):
+    """Non-Path3D element in list raises ValueError, not AttributeError."""
+    pytest.importorskip("plotly.graph_objects")
+
+    with pytest.raises(ValueError, match="Path3D instance"):
+        plot_paths3d_interactive(
+            [straight_path, "not_a_path"],
+            show_plot=False,
+        )

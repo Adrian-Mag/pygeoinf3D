@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from pygeoinf3d.core.functions import Function3D
     from pygeoinf3d.core.paths import Path3D
     from pygeoinf3d.spaces.lebesgue import Lebesgue3D
+    from pygeoinf3d.spaces.sobolev import Sobolev3D
 
 
 class VolumeKernel3D(LinearForm):
@@ -223,7 +224,7 @@ class VolumeKernel3D(LinearForm):
 # ===========================================================================
 
 class PathIntegralFunctional(LinearForm):
-    """A linear form on :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D`
+    """A linear form on :class:`~pygeoinf3d.spaces.sobolev.Sobolev3D`
     defined by integration along a curve.
 
     The evaluation is:
@@ -243,8 +244,11 @@ class PathIntegralFunctional(LinearForm):
     Parameters
     ----------
     space:
-        The :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` on which this
-        form is defined.
+        The :class:`~pygeoinf3d.spaces.sobolev.Sobolev3D` on which this
+        form is defined.  A plain
+        :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` is rejected because
+        path-integral functionals require the Sobolev regularity to admit
+        a spectral representer under :meth:`Sobolev3D.from_dual`.
     path:
         The :class:`~pygeoinf3d.core.paths.Path3D` along which to integrate.
         If ``path.domain`` is not ``None`` it must be the same object as
@@ -265,18 +269,22 @@ class PathIntegralFunctional(LinearForm):
 
     def __init__(
         self,
-        space: "Lebesgue3D",
+        space: "Sobolev3D",
         path: "Path3D",
         *,
         n_quad: int = 200,
         _scale: float = 1.0,
     ) -> None:
         from pygeoinf3d.core.paths import Path3D as _Path3D
-        from pygeoinf3d.spaces.lebesgue import Lebesgue3D as _Lebesgue3D
-        if not isinstance(space, _Lebesgue3D):
+        from pygeoinf3d.spaces.sobolev import Sobolev3D as _Sobolev3D
+        if not isinstance(space, _Sobolev3D):
             raise TypeError(
-                f"'space' must be a Lebesgue3D instance; "
-                f"got {type(space).__name__!r}."
+                f"'space' must be a Sobolev3D instance; "
+                f"got {type(space).__name__!r}.  "
+                "PathIntegralFunctional requires a Sobolev3D domain so that "
+                "path-integral representers can be computed via "
+                "Sobolev3D.from_dual.  Wrap your Lebesgue3D with a "
+                "Sobolev3D (e.g. using BesselSobolevBox as weight)."
             )
         if not isinstance(path, _Path3D):
             raise TypeError(
@@ -297,7 +305,7 @@ class PathIntegralFunctional(LinearForm):
             )
         self._path: "Path3D" = path
         self._n_quad: int = int(n_quad)
-        self._space: "Lebesgue3D" = space
+        self._space: "Sobolev3D" = space
         self._scale: float = float(_scale)
         # Bypass component enumeration.
         super().__init__(space, components=np.zeros(0))
@@ -389,7 +397,7 @@ class PathIntegralFunctional(LinearForm):
         if other._space is not self._space:
             raise ValueError(
                 "Cannot add PathIntegralFunctional objects from different "
-                "Lebesgue3D instances."
+                "Sobolev3D instances."
             )
         n = max(self._n_quad, other._n_quad)
         return PathIntegralFunctional(
@@ -412,7 +420,7 @@ class PathIntegralFunctional(LinearForm):
         if other._space is not self._space:
             raise ValueError(
                 "Cannot subtract PathIntegralFunctional objects from "
-                "different Lebesgue3D instances."
+                "different Sobolev3D instances."
             )
         n = max(self._n_quad, other._n_quad)
         return PathIntegralFunctional(
@@ -440,7 +448,7 @@ class PathIntegralFunctional(LinearForm):
         if other._space is not self._space:
             raise ValueError(
                 "Cannot in-place add PathIntegralFunctional objects from "
-                "different Lebesgue3D instances."
+                "different Sobolev3D instances."
             )
         self._scale += other._scale
         return self
@@ -460,7 +468,7 @@ class PathIntegralFunctional(LinearForm):
         if other._space is not self._space:
             raise ValueError(
                 "Cannot in-place subtract PathIntegralFunctional objects "
-                "from different Lebesgue3D instances."
+                "from different Sobolev3D instances."
             )
         self._scale -= other._scale
         return self
@@ -500,9 +508,11 @@ class SumLinearForm(LinearForm):
     Parameters
     ----------
     space:
-        The :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` on which all
-        component forms are defined.  Every form in *terms* must satisfy
-        ``form.domain is space``.
+        A Hilbert space on which all component forms are defined.  Accepts
+        :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D`,
+        :class:`~pygeoinf3d.spaces.sobolev.Sobolev3D`, or any
+        :class:`~pygeoinf.HilbertSpace`.  Every form in *terms* must satisfy
+        ``form.domain is space`` (identity check).
     terms:
         A list of ``(coefficient, form)`` pairs.  Each *coefficient* is a
         :class:`float` and each *form* is a :class:`~pygeoinf.LinearForm`
@@ -522,15 +532,9 @@ class SumLinearForm(LinearForm):
 
     def __init__(
         self,
-        space: "Lebesgue3D",
+        space,
         terms: "Sequence[tuple[float, LinearForm]]",
     ) -> None:
-        from pygeoinf3d.spaces.lebesgue import Lebesgue3D as _Lebesgue3D
-        if not isinstance(space, _Lebesgue3D):
-            raise TypeError(
-                f"'space' must be a Lebesgue3D instance; "
-                f"got {type(space).__name__!r}."
-            )
         if not terms:
             raise ValueError(
                 "SumLinearForm requires at least one term."
@@ -543,7 +547,7 @@ class SumLinearForm(LinearForm):
                 )
             if form.domain is not space:
                 raise ValueError(
-                    f"terms[{i}][1].domain is not the same Lebesgue3D "
+                    f"terms[{i}][1].domain is not the same space "
                     "instance as 'space' (identity check).  "
                     "All component forms must be defined on the same space."
                 )

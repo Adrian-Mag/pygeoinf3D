@@ -34,6 +34,7 @@ from pygeoinf3d.spaces.forms import (
     PathIntegralFunctional,
     SumLinearForm,
 )
+from pygeoinf3d.spaces.sobolev import Sobolev3D
 from pygeoinf import LinearForm
 
 
@@ -84,6 +85,33 @@ def _make_space() -> Lebesgue3D:
 def _make_domain_and_space():
     dom = _make_domain()
     return dom, Lebesgue3D(dom)
+
+
+def _make_sobolev_space() -> Sobolev3D:
+    """Return a Sobolev3D with identity weight (W = I) for testing."""
+    from pygeoinf.linear_operators import LinearOperator
+    dom = _make_domain()
+    lebesgue = Lebesgue3D(dom)
+
+    def _identity(f):
+        return f
+
+    W = LinearOperator(lebesgue, lebesgue, _identity, adjoint_mapping=_identity)
+    return Sobolev3D(lebesgue, W, W)
+
+
+def _make_domain_and_sobolev():
+    """Return (domain, Sobolev3D) with identity weight for testing."""
+    from pygeoinf.linear_operators import LinearOperator
+    dom = _make_domain()
+    lebesgue = Lebesgue3D(dom)
+
+    def _identity(f):
+        return f
+
+    W = LinearOperator(lebesgue, lebesgue, _identity, adjoint_mapping=_identity)
+    sobolev = Sobolev3D(lebesgue, W, W)
+    return dom, sobolev
 
 
 # ---------------------------------------------------------------------------
@@ -137,71 +165,78 @@ class TestPathIntegralFunctionalConstructor:
 
     def test_construction_straight_line(self):
         from pygeoinf import LinearForm
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         path = _straight_path()
-        ell = PathIntegralFunctional(space, path)
+        ell = PathIntegralFunctional(sobolev, path)
         assert isinstance(ell, LinearForm)
 
-    def test_domain_is_lebesgue_space(self):
-        dom, space = _make_domain_and_space()
+    def test_domain_is_sobolev_space(self):
+        dom, sobolev = _make_domain_and_sobolev()
         path = _straight_path()
-        ell = PathIntegralFunctional(space, path)
-        assert ell.domain is space
+        ell = PathIntegralFunctional(sobolev, path)
+        assert ell.domain is sobolev
 
     def test_result_is_scalar(self):
         """Evaluating the functional returns a Python float (scalar)."""
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         path = _straight_path()
         f = _const_fn(dom, 1.0)
-        ell = PathIntegralFunctional(space, path)
+        ell = PathIntegralFunctional(sobolev, path)
         result = ell(f)
         assert isinstance(result, float), f"Expected float, got {type(result)}"
 
     def test_path_stored(self):
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         path = _straight_path()
-        ell = PathIntegralFunctional(space, path)
+        ell = PathIntegralFunctional(sobolev, path)
         assert ell.path is path
 
     def test_n_quad_default(self):
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         path = _straight_path()
-        ell = PathIntegralFunctional(space, path)
+        ell = PathIntegralFunctional(sobolev, path)
         assert ell.n_quad == 200
 
     def test_n_quad_custom(self):
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         path = _straight_path()
-        ell = PathIntegralFunctional(space, path, n_quad=50)
+        ell = PathIntegralFunctional(sobolev, path, n_quad=50)
         assert ell.n_quad == 50
 
     def test_domain_mismatch_raises(self):
         """Path with a *different* Domain3D than the space should raise."""
-        dom1, space = _make_domain_and_space()
+        dom1, sobolev = _make_domain_and_sobolev()
         dom2 = _make_domain()  # different object
         path = Path3D.from_polyline(
             np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
             domain=dom2,
         )
         with pytest.raises(ValueError):
-            PathIntegralFunctional(space, path)
+            PathIntegralFunctional(sobolev, path)
 
     def test_bad_space_raises_typeerror(self):
-        """Passing a non-Lebesgue3D as space raises TypeError."""
+        """Passing a non-Sobolev3D as space raises TypeError."""
         path = _straight_path()
-        with pytest.raises(TypeError, match="Lebesgue3D"):
+        with pytest.raises(TypeError, match="Sobolev3D"):
             PathIntegralFunctional(object(), path)
+
+    def test_lebesgue3d_space_raises_typeerror(self):
+        """Passing a Lebesgue3D (not Sobolev3D) as space raises TypeError."""
+        dom, lebesgue = _make_domain_and_space()
+        path = _straight_path()
+        with pytest.raises(TypeError, match="Sobolev3D"):
+            PathIntegralFunctional(lebesgue, path)
 
     def test_bad_path_raises_typeerror(self):
         """Passing a non-Path3D as path raises TypeError."""
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         with pytest.raises(TypeError, match="Path3D"):
-            PathIntegralFunctional(space, object())
+            PathIntegralFunctional(sobolev, object())
 
     def test_components_raises_typeerror(self):
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         path = _straight_path()
-        ell = PathIntegralFunctional(space, path)
+        ell = PathIntegralFunctional(sobolev, path)
         with pytest.raises(TypeError):
             _ = ell.components
 
@@ -215,10 +250,10 @@ class TestPathIntegralFunctionalEvaluation:
     def test_constant_function_straight_line(self):
         """ℓ_γ(c) ≈ c × arclength = c × 1 for unit straight line."""
         c = 3.0
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         path = _straight_path(0.0, 1.0)  # length = 1
         f = _const_fn(dom, c)
-        ell = PathIntegralFunctional(space, path, n_quad=200)
+        ell = PathIntegralFunctional(sobolev, path, n_quad=200)
         result = ell(f)
         np.testing.assert_allclose(result, c * 1.0, rtol=1e-2)
 
@@ -226,10 +261,10 @@ class TestPathIntegralFunctionalEvaluation:
         """ℓ_γ(c) ≈ c × L for path of length L."""
         c = 2.5
         L = 5.0
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         path = _straight_path(0.0, L)
         f = _const_fn(dom, c)
-        ell = PathIntegralFunctional(space, path, n_quad=200)
+        ell = PathIntegralFunctional(sobolev, path, n_quad=200)
         result = ell(f)
         np.testing.assert_allclose(result, c * L, rtol=1e-2)
 
@@ -237,32 +272,32 @@ class TestPathIntegralFunctionalEvaluation:
         """For f=1 and a circular arc of radius R and angle θ, ℓ_γ = R*θ."""
         R = 2.0
         theta = np.pi / 2
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         path = _circular_arc(R, theta)
         f = _const_fn(dom, 1.0)
-        ell = PathIntegralFunctional(space, path, n_quad=500)
+        ell = PathIntegralFunctional(sobolev, path, n_quad=500)
         expected = R * theta
         result = ell(f)
         np.testing.assert_allclose(result, expected, rtol=1e-2)
 
     def test_pointwise_scalar_correct(self):
         """For f(x,y,z)=x and path (0,0,0)→(2,0,0): ℓ = ∫₀² x dx = 2."""
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         path = _straight_path(0.0, 2.0)  # length = 2
         f = _linear_x_fn(dom)
-        ell = PathIntegralFunctional(space, path, n_quad=500)
+        ell = PathIntegralFunctional(sobolev, path, n_quad=500)
         # ∫₀² x dx = [x²/2]₀² = 2
         np.testing.assert_allclose(ell(f), 2.0, rtol=1e-2)
 
     def test_higher_n_quad_more_accurate(self):
         """Higher n_quad gives a smaller absolute error for sin(πx) on [0,1]."""
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         path = _straight_path(0.0, 1.0)
         f = _sin_fn(dom)
         # Analytic: ∫₀¹ sin(πx) dx = 2/π
         exact = 2.0 / np.pi
-        ell_lo = PathIntegralFunctional(space, path, n_quad=5)
-        ell_hi = PathIntegralFunctional(space, path, n_quad=500)
+        ell_lo = PathIntegralFunctional(sobolev, path, n_quad=5)
+        ell_hi = PathIntegralFunctional(sobolev, path, n_quad=500)
         err_lo = abs(ell_lo(f) - exact)
         err_hi = abs(ell_hi(f) - exact)
         assert err_hi < err_lo, (
@@ -272,17 +307,17 @@ class TestPathIntegralFunctionalEvaluation:
 
     def test_n_quad_1_raises(self):
         """n_quad=1 is invalid for composite trapezoidal rule."""
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         path = _straight_path(0.0, 1.0)
         with pytest.raises(ValueError, match="n_quad"):
-            PathIntegralFunctional(space, path, n_quad=1)
+            PathIntegralFunctional(sobolev, path, n_quad=1)
 
     def test_n_quad_0_raises(self):
         """n_quad=0 is invalid."""
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         path = _straight_path(0.0, 1.0)
         with pytest.raises(ValueError, match="n_quad"):
-            PathIntegralFunctional(space, path, n_quad=0)
+            PathIntegralFunctional(sobolev, path, n_quad=0)
 
 
 # ===========================================================================
@@ -292,58 +327,59 @@ class TestPathIntegralFunctionalEvaluation:
 class TestPathIntegralFunctionalAlgebra:
 
     def _setup(self):
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         path = _straight_path(0.0, 1.0)
         f = _const_fn(dom, 3.0)
-        ell = PathIntegralFunctional(space, path, n_quad=100)
-        return dom, space, path, f, ell
+        ell = PathIntegralFunctional(sobolev, path, n_quad=100)
+        return dom, sobolev, path, f, ell
 
     def test_scale_mul(self):
-        dom, space, path, f, ell = self._setup()
+        dom, sobolev, path, f, ell = self._setup()
         base = ell(f)
         scaled = (2.0 * ell)(f)
         np.testing.assert_allclose(scaled, 2.0 * base, rtol=1e-10)
 
     def test_scale_rmul(self):
-        dom, space, path, f, ell = self._setup()
+        dom, sobolev, path, f, ell = self._setup()
         base = ell(f)
         scaled = (ell * 3.0)(f)
         np.testing.assert_allclose(scaled, 3.0 * base, rtol=1e-10)
 
     def test_neg(self):
-        dom, space, path, f, ell = self._setup()
+        dom, sobolev, path, f, ell = self._setup()
         base = ell(f)
         neg = (-ell)(f)
         np.testing.assert_allclose(neg, -base, rtol=1e-10)
 
     def test_truediv(self):
-        dom, space, path, f, ell = self._setup()
+        dom, sobolev, path, f, ell = self._setup()
         base = ell(f)
         divided = (ell / 4.0)(f)
         np.testing.assert_allclose(divided, base / 4.0, rtol=1e-10)
 
     def test_add_same_path(self):
-        dom, space, path, f, ell = self._setup()
+        dom, sobolev, path, f, ell = self._setup()
         base = ell(f)
         added = (ell + ell)(f)
         np.testing.assert_allclose(added, 2.0 * base, rtol=1e-10)
 
     def test_sub_same_path(self):
-        dom, space, path, f, ell = self._setup()
+        dom, sobolev, path, f, ell = self._setup()
         diff = (ell - ell)(f)
         np.testing.assert_allclose(diff, 0.0, atol=1e-10)
 
     def test_add_typeerror_on_volume_kernel(self):
-        dom, space, path, f, ell = self._setup()
-        kernel = VolumeKernel3D(space, f)
+        dom, sobolev, path, f, ell = self._setup()
+        # VolumeKernel3D still requires Lebesgue3D; build on the base_space
+        kernel = VolumeKernel3D(sobolev.base_space, f)
         with pytest.raises(TypeError):
             _ = ell + kernel
 
     def test_linearity_on_functions(self):
-        """\u2113(α*f + β*g) == α*ℓ(f) + β*ℓ(g) to floating-point tolerance."""
-        dom, space = _make_domain_and_space()
+        """ℓ(α*f + β*g) == α*ℓ(f) + β*ℓ(g) to floating-point tolerance."""
+        dom, sobolev = _make_domain_and_sobolev()
         path = _straight_path(0.0, 1.0)
-        ell = PathIntegralFunctional(space, path, n_quad=200)
+        ell = PathIntegralFunctional(sobolev, path, n_quad=200)
         alpha, beta = 2.0, -1.5
         f = _const_fn(dom, 3.0)
         g = _linear_x_fn(dom)
@@ -367,22 +403,22 @@ class TestPathIntegralFunctionalDifferentPaths:
 
     def test_different_paths_same_space(self):
         """Two functionals on different paths of the same space both work."""
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         path_a = _straight_path(0.0, 1.0)
         path_b = _straight_path(0.0, 2.0)
         f = _const_fn(dom, 5.0)
-        ell_a = PathIntegralFunctional(space, path_a, n_quad=200)
-        ell_b = PathIntegralFunctional(space, path_b, n_quad=200)
+        ell_a = PathIntegralFunctional(sobolev, path_a, n_quad=200)
+        ell_b = PathIntegralFunctional(sobolev, path_b, n_quad=200)
         np.testing.assert_allclose(ell_a(f), 5.0 * 1.0, rtol=1e-2)
         np.testing.assert_allclose(ell_b(f), 5.0 * 2.0, rtol=1e-2)
 
     def test_polyline_path_consistent_arclength(self):
         """Polyline path from (0,0,0)→(1,0,0)→(1,1,0) has arclength ≈ 2."""
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         waypoints = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0]])
         path = Path3D.from_polyline(waypoints)
         f = _const_fn(dom, 1.0)
-        ell = PathIntegralFunctional(space, path, n_quad=500)
+        ell = PathIntegralFunctional(sobolev, path, n_quad=500)
         # arclength = 1 + 1 = 2; ℓ(1) ≈ 2
         np.testing.assert_allclose(ell(f), 2.0, rtol=1e-2)
 
@@ -394,25 +430,25 @@ class TestPathIntegralFunctionalDifferentPaths:
 class TestPathIntegralFunctionalDomainValidation:
 
     def test_none_domain_path_always_accepted(self):
-        """Path3D with domain=None is accepted by any Lebesgue3D space."""
-        dom, space = _make_domain_and_space()
+        """Path3D with domain=None is accepted by any Sobolev3D space."""
+        dom, sobolev = _make_domain_and_sobolev()
         path = Path3D.from_polyline(
             np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
             domain=None,
         )
         # Should not raise
-        ell = PathIntegralFunctional(space, path)
+        ell = PathIntegralFunctional(sobolev, path)
         assert ell.path is path
 
     def test_matching_domain_path_accepted(self):
         """Path with domain matching space.function_domain is accepted."""
-        dom, space = _make_domain_and_space()
+        dom, sobolev = _make_domain_and_sobolev()
         path = Path3D.from_polyline(
             np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
             domain=dom,
         )
         # Should not raise
-        ell = PathIntegralFunctional(space, path)
+        ell = PathIntegralFunctional(sobolev, path)
         assert ell.path is path
 
 
@@ -421,17 +457,17 @@ class TestPathIntegralFunctionalDomainValidation:
 # ---------------------------------------------------------------------------
 
 def _make_two_path_forms():
-    """Return (space, form_a, form_b) on a fresh mock Lebesgue3D."""
-    space = _make_space()
+    """Return (sobolev, form_a, form_b) on a fresh Sobolev3D."""
+    sobolev = _make_sobolev_space()
     path_a = Path3D.from_polyline(
         np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     )
     path_b = Path3D.from_polyline(
         np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
     )
-    form_a = PathIntegralFunctional(space, path_a)
-    form_b = PathIntegralFunctional(space, path_b)
-    return space, form_a, form_b
+    form_a = PathIntegralFunctional(sobolev, path_a)
+    form_b = PathIntegralFunctional(sobolev, path_b)
+    return sobolev, form_a, form_b
 
 
 class TestSumLinearForm:
@@ -484,7 +520,7 @@ class TestSumLinearForm:
         assert terms_out[1][1] is form_b
 
     def test_domain_is_space(self):
-        """.domain is the Lebesgue3D passed at construction."""
+        """.domain is the space passed at construction."""
         space, form_a, form_b = _make_two_path_forms()
         slm = SumLinearForm(space, [(1.0, form_a), (1.0, form_b)])
         assert slm.domain is space
@@ -492,7 +528,7 @@ class TestSumLinearForm:
     def test_domain_mismatch_raises(self):
         """Form defined on a different space raises ValueError."""
         space_a, form_a, _ = _make_two_path_forms()
-        space_b = _make_space()
+        space_b = _make_sobolev_space()
         path_b = Path3D.from_polyline(
             np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
         )

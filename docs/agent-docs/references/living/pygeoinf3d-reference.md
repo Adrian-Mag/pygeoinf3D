@@ -1,10 +1,10 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are complete and archived. **`Sobolev3D` Phase 1 is complete** inside the active continuous path-integral Sobolev inversion plan. **`Path3D` Phase 2 is complete** (callable, polyline, and point-sample constructors; normalized arc-length parameterization; 25 tests). **`PathIntegralFunctional` Phase 3 is complete** (path-integral linear form; composite trapezoidal quadrature; scalar algebra; domain/type validation; 30 tests). **`SOLAOperator3D` Phase 4 + Phase 4 Revision is complete** (generalized to accept any `LinearForm` subclass — `VolumeKernel3D` or `PathIntegralFunctional` — including mixed stacks; dual returns `SumLinearForm` for multi-path and mixed stacks; adjoint error for unsupported forms on plain `Lebesgue3D`; 6+9 tests). **`SumLinearForm` is complete** (weighted sum composite form; basis-free evaluation; 9 tests). **`Sobolev3D.from_dual` Phase 5 is complete** (spectral representer formula for general `LinearForm`; recursive `SumLinearForm` branch; 8 new tests; `SOLAOperator3D` accepts `Sobolev3D` domain; end-to-end `path_integral_minimum_norm_demo.py`). The entire continuous path-integral Sobolev inversion plan is now complete. `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula; `Sobolev3D` is a first-class Hilbert space wrapping `Lebesgue3D` + a weight operator. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the remaining active architecture track. A full 6-notebook demo suite is committed.
+> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are complete and archived. **`Sobolev3D` Phase 1 is complete** inside the active continuous path-integral Sobolev inversion plan. **`Path3D` Phase 2 is complete** (callable, polyline, and point-sample constructors; normalized arc-length parameterization; 25 tests). **`PathIntegralFunctional` Phase 3 is complete** (path-integral linear form; composite trapezoidal quadrature; scalar algebra; domain/type validation; 30 tests). **`SOLAOperator3D` Phase 4 + Phase 4 Revision is complete** (generalized to accept any `LinearForm` subclass — `VolumeKernel3D` or `PathIntegralFunctional` — including mixed stacks; dual returns `SumLinearForm` for multi-path and mixed stacks; adjoint error for unsupported forms on plain `Lebesgue3D`; 6+9 tests). **`SumLinearForm` is complete** (weighted sum composite form; basis-free evaluation; 9 tests). **`Sobolev3D.from_dual` Phase 5 is complete** (spectral representer formula for general `LinearForm`; recursive `SumLinearForm` branch; 8 new tests; `SOLAOperator3D` accepts `Sobolev3D` domain; end-to-end `path_integral_minimum_norm_demo.py`). The entire continuous path-integral Sobolev inversion plan is now complete. `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula; `Sobolev3D` is a first-class Hilbert space wrapping `Lebesgue3D` + a weight operator. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the remaining active architecture track. A full 6-notebook demo suite is committed. **`plot_paths3d_interactive` Phase 1 is complete** (Plotly-based interactive 3D path viewer in `plot.py`; exported from top-level `__init__`; targeted tests cover single/multi-path smoke, Plotly ImportError, n_samples validation, label mismatch, non-Path3D inputs, and optional domain box; `interactive-3d-path-visualization-plan.md` Phase 1 done). **`sobolev-path-form-domain-refactor-plan.md` Phase 1 is complete** (`PathIntegralFunctional` now requires `Sobolev3D` domain and rejects `Lebesgue3D`; `SumLinearForm` generalized to accept any `HilbertSpace` domain; `Sobolev3D.from_dual` accepts forms on `self` or `self.base_space`; minimal `SOLAOperator3D` kernel-domain check updated; 88 targeted tests pass; 6 SOLA path-form tests remain broken pending Phase 3 SOLA domain-contract cleanup).
 >
-> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5). The `continuous-path-integral-sobolev-inversion-plan.md` is now complete and archived.
+> **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5); `sobolev-path-form-domain-refactor-plan.md` (phases 2–4 pending).
 >
-> **Last updated:** 2026-03-16
+> **Last updated:** 2026-03-16 (sobolev-path-form-domain-refactor Phase 1 complete)
 
 ---
 
@@ -13,6 +13,7 @@
 | Plan | Status |
 |------|--------|
 | `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` | **Active** — phases 3–5 in progress |
+| `sobolev-path-form-domain-refactor-plan.md` | **Active** — Phase 1 complete; phases 2–4 pending |
 | `continuous-path-integral-sobolev-inversion-plan.md` | **Complete** — all 5 phases done; archived to `completed-plans/` |
 | `bessel-sobolev-box-plan.md` | **Complete** — archived to `completed-plans/` |
 
@@ -93,14 +94,41 @@ y = op(f)   # [ℓ_γ1(f), ℓ_γ2(f), …]
 Phase 5 message) when path-integral forms are used on a plain `Lebesgue3D`.
 Phase 5 will introduce representer logic via a `Sobolev3D` domain.
 
+**Line-integral kernels — updated domain contract (Phase 1 of sobolev-path-form-domain-refactor):**
+`PathIntegralFunctional` now **requires a `Sobolev3D` domain** (passing a plain `Lebesgue3D` raises `TypeError`).
+`SumLinearForm` now accepts **any `HilbertSpace` domain** (previously required `Lebesgue3D`).
+`Sobolev3D.from_dual` now accepts forms whose `.domain is self` (Sobolev3D) in addition to `.domain is self.base_space`.
+`SOLAOperator3D` sequence-mode kernel validation also accepts forms on the actual operator domain (`Sobolev3D`) in addition to the extracted `Lebesgue3D` base space.
+
+```python
+from pygeoinf3d.spaces.forms import PathIntegralFunctional
+from pygeoinf3d.spaces.sobolev import Sobolev3D
+from pygeoinf3d.core.paths import Path3D
+
+# Phase 1: PathIntegralFunctional requires Sobolev3D, not Lebesgue3D
+paths = [Path3D.from_polyline(wp) for wp in waypoints_list]
+forms = [PathIntegralFunctional(sobolev, p) for p in paths]   # sobolev is Sobolev3D
+op = SOLAOperator3D(sobolev, EuclideanSpace(len(forms)), forms)
+y = op(f)   # [ℓ_γ1(f), ℓ_γ2(f), …]
+adj_y = op.adjoint(y_vec)   # Function3D representer (requires SpectralOperator3D weight)
+```
+
+**Adjoint limitation (Phase 1):** `op.adjoint(y)` requires `inverse_weight` to be a
+`SpectralOperator3D` (e.g. `BesselSobolevBox`).  A `TypeError` with a helpful message is
+raised otherwise.
+
+**SOLA path-form tests deferred:** 6 tests in `TestSOLAOperator3DWithPathFunctionals`
+(in `tests/operators/test_sola.py`) that previously constructed `PathIntegralFunctional`
+on a plain `Lebesgue3D` now fail correctly.  These will be updated in Phase 3 of the
+`sobolev-path-form-domain-refactor-plan`.
+
 **Remaining non-implemented kernel types:**
 - *Surface-integral kernels* — flux measurements or boundary data
 - *Point-evaluation kernels* — seismometer point readings
 
 These still require separate `LinearForm` subclasses and coordinated changes
-to `KernelProvider3D.get_kernel` (which currently only returns `VolumeKernel3D`)
-and `Lebesgue3D.from_dual`.  The design notes are tracked by the active
-Lebesgue coefficient architecture plan (phases 3–5).
+to `KernelProvider3D.get_kernel` and `Lebesgue3D.from_dual`.  The design notes are tracked
+by the active Lebesgue coefficient architecture plan (phases 3–5).
 
 ---
 
@@ -131,7 +159,7 @@ pygeoinf3D/
 │   └── path_integral_minimum_norm_demo.py        # End-to-end path-integral minimum-norm inversion (Phase 5)
 ├── pygeoinf3d/
 │   ├── __init__.py          # Re-exports all public API
-│   ├── plot.py              # Visualization (static slices + Plotly sliders + volume/isosurface helpers)
+│   ├── plot.py              # Visualization (static slices + Plotly sliders + volume/isosurface helpers + plot_paths3d_interactive)
 │   ├── core/
 │   │   ├── __init__.py
 │   │   ├── config.py        # AxisAlignedBoundingBox, CoordinateSystem
@@ -665,6 +693,7 @@ from pygeoinf3d.plot import (
     plot_function3d_volume_dropdown,
     plot_function3d_isosurface,
     compare_function3d_axis_sliders,
+    plot_paths3d_interactive,
 )
 ```
 
@@ -887,6 +916,45 @@ all subplots simultaneously.
 - `n_slices ≤ 0` or malformed `resolution` → `ValueError`
 - Plotly not installed → `ImportError`
 
+#### `plot_paths3d_interactive`
+
+```python
+plot_paths3d_interactive(
+    paths: Path3D | list[Path3D],
+    *,
+    n_samples: int = 100,
+    show_domain_box: bool = False,
+    show_markers: bool = True,
+    labels: list[str] | None = None,
+    show_plot: bool = True,
+    title: str | None = None,
+) -> plotly.graph_objects.Figure
+```
+
+Renders one or more `Path3D` curves as an interactive Plotly `Scatter3d` figure.
+Samples each path at `n_samples` arc-length-parameterised nodes via
+`path.arc_length_nodes(n)`, returning `(t_arr, pts_arr)` with `pts_arr.shape == (n, 3)`.
+
+| Arg | Description |
+|-----|-------------|
+| `paths` | Single `Path3D` or list of `Path3D` instances |
+| `n_samples` | Points sampled per curve (≥ 2); raises `ValueError` otherwise |
+| `show_domain_box` | If `True`, overlays a dashed grey wireframe of the first path's domain bbox |
+| `show_markers` | If `True`, adds filled circle (start) and diamond (end) markers for each path |
+| `labels` | Per-path legend labels; must have same length as `paths` or be `None` |
+| `show_plot` | Calls `fig.show()` before returning |
+| `title` | Optional figure title |
+
+Validation errors:
+- Non-`Path3D` element in list → `ValueError`
+- `n_samples < 2` → `ValueError`
+- `labels` length mismatch → `ValueError`
+- Plotly not installed → `ImportError`
+
+Used in `demos/7_path_forms_demo.ipynb` to replace the 2D matplotlib path projection
+(Cell 5 — three construction modes) and to visualise the 8 SOLAOperator3D measurement
+paths (new cell after Cell 15).
+
 ### Private Helpers
 
 | Helper | Description |
@@ -895,6 +963,8 @@ all subplots simultaneously.
 | `_get_other_axes(axis_idx)` | Returns `(u_idx, v_idx)` for the two free axes |
 | `_validate_resolution(res)` | Validates and returns `(nu, nv)`; raises `ValueError` for non-positive or malformed input |
 | `_validate_n_slices(n)` | Validates interactive slider length |
+| `_validate_n_samples(n)` | Validates `n >= 2` for `plot_paths3d_interactive`; raises `ValueError` |
+| `_bbox_wireframe_trace(go, low, high)` | Builds a single `Scatter3d` 12-edge bounding-box wireframe using `None` separators (dashed grey) |
 | `_import_plotly_graph_objects()` | Lazy optional Plotly import with install hint |
 | `_import_plotly_make_subplots()` | Lazy import of `plotly.subplots.make_subplots` with same install hint |
 
@@ -931,6 +1001,14 @@ all subplots simultaneously.
 | `test_compare_function3d_axis_sliders_validation_titles_length` | Mismatched titles length raises `ValueError` |
 | `test_compare_function3d_axis_sliders_validation_bbox_mismatch` | Incompatible bounding boxes raise `ValueError` |
 | `test_compare_function3d_axis_sliders_requires_plotly` | Monkeypatched missing Plotly raises `ImportError` |
+| `test_plot_path3d_interactive_smoke` | Single `Path3D`; checks Scatter3d trace count and axis labels |
+| `test_plot_paths3d_interactive_multiple_paths` | 2 paths with labels; verifies label names in traces |
+| `test_plot_paths3d_interactive_requires_plotly` | Monkeypatched missing Plotly raises `ImportError` |
+| `test_plot_paths3d_interactive_validates_n_samples` | `n=0` and `n=1` each raise `ValueError` |
+| `test_plot_paths3d_interactive_domain_box` | `show_domain_box=True` adds a bbox wireframe trace |
+| `test_plot_paths3d_interactive_no_domain_box_by_default` | Default `show_domain_box=False` yields exactly 1 trace |
+| `test_plot_paths3d_interactive_labels_length_mismatch` | Labels list wrong length raises `ValueError` |
+| `test_plot_paths3d_interactive_non_path3d_element` | Non-`Path3D` item in list raises `ValueError` |
 
 ---
 

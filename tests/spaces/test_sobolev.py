@@ -622,7 +622,7 @@ class TestSobolev3DFromDualSpectral:
         from pygeoinf3d.spaces.forms import PathIntegralFunctional
 
         form = PathIntegralFunctional(
-            sobolev_bessel.base_space, path_across_box, n_quad=50
+            sobolev_bessel, path_across_box, n_quad=50
         )
         r = sobolev_bessel.from_dual(form)
         assert isinstance(r, Function3D)
@@ -634,7 +634,7 @@ class TestSobolev3DFromDualSpectral:
         from pygeoinf3d.spaces.forms import PathIntegralFunctional
 
         form = PathIntegralFunctional(
-            sobolev_bessel.base_space, path_across_box, n_quad=50
+            sobolev_bessel, path_across_box, n_quad=50
         )
         r = sobolev_bessel.from_dual(form)
         lhs = float(form(r))
@@ -648,7 +648,7 @@ class TestSobolev3DFromDualSpectral:
         from pygeoinf3d.spaces.forms import PathIntegralFunctional
 
         form = PathIntegralFunctional(
-            sobolev_bessel.base_space, path_across_box, n_quad=50
+            sobolev_bessel, path_across_box, n_quad=50
         )
         r = sobolev_bessel.from_dual(form)
         inv_w = sobolev_bessel.inverse_weight
@@ -664,12 +664,12 @@ class TestSobolev3DFromDualSpectral:
         from pygeoinf3d.spaces.forms import PathIntegralFunctional, SumLinearForm
 
         f1 = PathIntegralFunctional(
-            sobolev_bessel.base_space, path_across_box, n_quad=50
+            sobolev_bessel, path_across_box, n_quad=50
         )
         f2 = PathIntegralFunctional(
-            sobolev_bessel.base_space, path_diagonal, n_quad=50
+            sobolev_bessel, path_diagonal, n_quad=50
         )
-        sum_form = SumLinearForm(sobolev_bessel.base_space, [(1.0, f1), (1.0, f2)])
+        sum_form = SumLinearForm(sobolev_bessel, [(1.0, f1), (1.0, f2)])
         r = sobolev_bessel.from_dual(sum_form)
         assert isinstance(r, Function3D)
 
@@ -680,13 +680,13 @@ class TestSobolev3DFromDualSpectral:
         from pygeoinf3d.spaces.forms import PathIntegralFunctional, SumLinearForm
 
         f1 = PathIntegralFunctional(
-            sobolev_bessel.base_space, path_across_box, n_quad=50
+            sobolev_bessel, path_across_box, n_quad=50
         )
         f2 = PathIntegralFunctional(
-            sobolev_bessel.base_space, path_diagonal, n_quad=50
+            sobolev_bessel, path_diagonal, n_quad=50
         )
         sum_form = SumLinearForm(
-            sobolev_bessel.base_space, [(0.5, f1), (0.5, f2)]
+            sobolev_bessel, [(0.5, f1), (0.5, f2)]
         )
         r = sobolev_bessel.from_dual(sum_form)
         lhs = float(sum_form(r))
@@ -705,7 +705,8 @@ class TestSobolev3DFromDualSpectral:
             space, space, lambda f: f, adjoint_mapping=lambda f: f
         )
         sob = Sobolev3D(space, W, W)
-        form = PathIntegralFunctional(space, path_across_box, n_quad=20)
+        # Phase 1: PathIntegralFunctional now requires Sobolev3D domain
+        form = PathIntegralFunctional(sob, path_across_box, n_quad=20)
         with pytest.raises(TypeError, match="SpectralOperator3D"):
             sob.from_dual(form)
 
@@ -718,10 +719,10 @@ class TestSobolev3DFromDualSpectral:
         from pygeoinf3d.operators.sola import SOLAOperator3D
 
         f1 = PathIntegralFunctional(
-            sobolev_bessel.base_space, path_across_box, n_quad=50
+            sobolev_bessel, path_across_box, n_quad=50
         )
         f2 = PathIntegralFunctional(
-            sobolev_bessel.base_space, path_diagonal, n_quad=50
+            sobolev_bessel, path_diagonal, n_quad=50
         )
         op = SOLAOperator3D(sobolev_bessel, EuclideanSpace(2), [f1, f2])
         y = np.array([1.0, 0.5])
@@ -735,7 +736,7 @@ class TestSobolev3DFromDualSpectral:
         from pygeoinf3d.operators.sola import SOLAOperator3D
 
         form = PathIntegralFunctional(
-            sobolev_bessel.base_space, path_across_box, n_quad=50
+            sobolev_bessel, path_across_box, n_quad=50
         )
         op = SOLAOperator3D(sobolev_bessel, EuclideanSpace(1), [form])
         phi0 = sobolev_bessel.inverse_weight.get_eigenfunction(0)

@@ -217,13 +217,12 @@ class SOLAOperator3D(LinearOperator):
                         f"PathIntegralFunctional (LinearForm subclass); "
                         f"got {type(kernel).__name__!r}."
                     )
-                if kernel.domain is not self._lebesgue_domain:
+                if kernel.domain is not self._lebesgue_domain and kernel.domain is not domain:
                     raise ValueError(
                         f"kernels[{i}].domain is not the same Lebesgue3D "
                         "instance as the operator domain (identity check).  "
                         "Build each kernel form with the exact same "
-                        "Lebesgue3D object (or Sobolev3D.base_space) "
-                        "passed as 'domain' here."
+                        "Lebesgue3D object (or Sobolev3D) passed as 'domain' here."
                     )
             self._provider = None
             self._kernels = kernels_list
@@ -328,11 +327,11 @@ class SOLAOperator3D(LinearOperator):
             for i in range(1, self._n_kernels):
                 result = result + float(c[i]) * self._get_kernel(i)
             return result
-        # General case: wrap in SumLinearForm (always on the Lebesgue3D layer)
+        # General case: wrap in SumLinearForm on the operator domain
         from pygeoinf3d.spaces.forms import SumLinearForm
         terms = [(float(c[i]), self._get_kernel(i))
                  for i in range(self._n_kernels)]
-        return SumLinearForm(self._lebesgue_domain, terms)
+        return SumLinearForm(self.domain, terms)
 
     def _adjoint_mapping(self, y):
         """Adjoint map $A^\\dagger: W \\to V$.

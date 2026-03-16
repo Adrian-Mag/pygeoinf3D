@@ -14,6 +14,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
 from pygeoinf3d.core.functions import Function3D
+from pygeoinf3d.core.paths import Path3D
 
 if TYPE_CHECKING:
     import plotly.graph_objects as go
@@ -129,6 +130,23 @@ def _validate_plot_n_modes(plot_n_modes: Optional[int]) -> Optional[int]:
     return n
 
 
+def _validate_n_samples(n_samples: int) -> int:
+    """Validate the number of sample points for path rendering.
+
+    Must be a positive integer >= 2.
+    """
+    if not isinstance(n_samples, (int, np.integer)):
+        raise ValueError(
+            f"n_samples must be a positive integer >= 2, got {n_samples!r}."
+        )
+    n = int(n_samples)
+    if n < 2:
+        raise ValueError(
+            f"n_samples must be a positive integer >= 2, got {n}."
+        )
+    return n
+
+
 def _validate_volume_resolution(resolution: int) -> int:
     """Validate the regular 3D grid resolution for volume-style plots."""
     if not isinstance(resolution, (int, np.integer)):
@@ -149,7 +167,7 @@ def _import_plotly_graph_objects() -> Any:
         return import_module('plotly.graph_objects')
     except ImportError:
         raise ImportError(
-            "Interactive slice plotting requires the optional 'plotly' "
+            "Interactive plotting requires the optional 'plotly' "
             "dependency. Install pygeoinf3d[interactive] or pip install "
             "plotly."
         ) from None
@@ -987,6 +1005,185 @@ def compare_function3d_axis_sliders(
         width=min(460 * n_panels + 120, 1600),
         height=520,
         margin=dict(l=70, r=90, t=70, b=100),
+    )
+
+    if show_plot:
+        fig.show()
+
+    return fig
+
+
+def _bbox_wireframe_trace(go: Any, low: np.ndarray, high: np.ndarray) -> Any:
+    """Return a ``go.Scatter3d`` wireframe trace for an axis-aligned box.
+
+    The 12 edges of the box are joined into a single line trace using
+    ``None`` separators.
+
+    Args:
+        go: The ``plotly.graph_objects`` module (already imported).
+        low:  Shape ``(3,)`` lower corner of the box.
+        high: Shape ``(3,)`` upper corner of the box.
+
+    Returns:
+        A ``go.Scatter3d`` trace.
+    """
+    lx, ly, lz = float(low[0]), float(low[1]), float(low[2])
+    hx, hy, hz = float(high[0]), float(high[1]), float(high[2])
+
+    # 12 edges: 4 bottom, 4 top, 4 vertical
+    edges = [
+        ([lx, hx], [ly, ly], [lz, lz]),
+        ([hx, hx], [ly, hy], [lz, lz]),
+        ([hx, lx], [hy, hy], [lz, lz]),
+        ([lx, lx], [hy, ly], [lz, lz]),
+        ([lx, hx], [ly, ly], [hz, hz]),
+        ([hx, hx], [ly, hy], [hz, hz]),
+        ([hx, lx], [hy, hy], [hz, hz]),
+        ([lx, lx], [hy, ly], [hz, hz]),
+        ([lx, lx], [ly, ly], [lz, hz]),
+        ([hx, hx], [ly, ly], [lz, hz]),
+        ([hx, hx], [hy, hy], [lz, hz]),
+        ([lx, lx], [hy, hy], [lz, hz]),
+    ]
+    xs: list = []
+    ys: list = []
+    zs: list = []
+    for ex, ey, ez in edges:
+        xs.extend(ex + [None])
+        ys.extend(ey + [None])
+        zs.extend(ez + [None])
+
+    return go.Scatter3d(
+        x=xs, y=ys, z=zs,
+        mode='lines',
+        line=dict(color='grey', width=1, dash='dash'),
+        name='domain box',
+        showlegend=True,
+    )
+
+
+def plot_paths3d_interactive(
+    paths: Union["Path3D", list],
+    *,
+    n_samples: int = 100,
+    show_domain_box: bool = False,
+    show_markers: bool = True,
+    labels: Optional[list] = None,
+    show_plot: bool = True,
+    title: Optional[str] = None,
+) -> "go.Figure":
+    """Create an interactive Plotly 3D line plot.
+
+    The plot renders one or more ``Path3D`` objects.
+
+    Each path is sampled uniformly in normalized arc-length and rendered as a
+    ``go.Scatter3d`` line trace.  Optionally, start/end markers and a domain
+    bounding-box wireframe are overlaid.
+
+    Args:
+        paths: A single ``Path3D`` or a list of ``Path3D`` objects.
+        n_samples: Number of equally-spaced arc-length nodes used to render
+            each path.  Must be >= 2.  Defaults to 100.
+        show_domain_box: If *True* and the first path has a ``domain`` with a
+            ``bounding_box`` method, overlay it as a dashed wireframe.
+            Defaults to *False*.
+        show_markers: If *True*, add start (circle) and end (diamond) marker
+            traces at ``t=0`` and ``t=1`` for each path.  Defaults to *True*.
+        labels: Optional list of trace labels (one per path).  Defaults to
+            ``'Path 1'``, ``'Path 2'``, ...
+        show_plot: Whether to call ``fig.show()`` before returning.
+            Defaults to *True*.
+        title: Figure title.  Defaults to a generic description.
+
+    Returns:
+        A Plotly ``Figure`` with one ``go.Scatter3d`` line trace per path
+        (plus optional start/end marker traces and an optional domain-box
+        wireframe).
+
+    Raises:
+        ImportError: If Plotly is not installed.
+        ValueError: If ``n_samples < 2`` or ``labels`` has the wrong length.
+    """
+    go = _import_plotly_graph_objects()
+    n_samples_int = _validate_n_samples(n_samples)
+
+    # Normalise single path to a list
+    if isinstance(paths, Path3D):
+        path_list: list = [paths]
+    else:
+        path_list = list(paths)
+
+    if not path_list:
+        raise ValueError("paths must be a non-empty Path3D or list of Path3D.")
+
+    for idx, item in enumerate(path_list):
+        if not isinstance(item, Path3D):
+            raise ValueError(
+                f"Every element of paths must be a Path3D instance. "
+                f"Got {type(item)!r} at index {idx}."
+            )
+
+    if labels is not None and len(labels) != len(path_list):
+        raise ValueError(
+            f"labels must have the same length as paths "
+            f"({len(path_list)}), got {len(labels)}."
+        )
+
+    plot_labels = labels if labels is not None else [
+        f"Path {i + 1}" for i in range(len(path_list))
+    ]
+
+    fig = go.Figure()
+
+    for i, path in enumerate(path_list):
+        _, pts = path.arc_length_nodes(n_samples_int)   # (n, 3)
+        xs = pts[:, 0].tolist()
+        ys = pts[:, 1].tolist()
+        zs = pts[:, 2].tolist()
+
+        fig.add_trace(go.Scatter3d(
+            x=xs, y=ys, z=zs,
+            mode='lines',
+            name=plot_labels[i],
+            line=dict(width=4),
+        ))
+
+        if show_markers:
+            fig.add_trace(go.Scatter3d(
+                x=[xs[0]], y=[ys[0]], z=[zs[0]],
+                mode='markers',
+                marker=dict(size=6, symbol='circle'),
+                name=f"{plot_labels[i]} start",
+                showlegend=False,
+            ))
+            fig.add_trace(go.Scatter3d(
+                x=[xs[-1]], y=[ys[-1]], z=[zs[-1]],
+                mode='markers',
+                marker=dict(size=6, symbol='diamond'),
+                name=f"{plot_labels[i]} end",
+                showlegend=False,
+            ))
+
+    if show_domain_box:
+        domain = path_list[0].domain
+        if domain is not None and hasattr(domain, 'bounding_box'):
+            bbox = domain.bounding_box()
+            fig.add_trace(_bbox_wireframe_trace(go, bbox.low, bbox.high))
+
+    if title is None:
+        n = len(path_list)
+        title = f"Path3D viewer ({n} path{'s' if n != 1 else ''})"
+
+    fig.update_layout(
+        title=title,
+        scene=dict(
+            xaxis_title='x',
+            yaxis_title='y',
+            zaxis_title='z',
+            aspectmode='data',
+        ),
+        height=600,
+        margin=dict(l=0, r=0, b=0, t=60),
     )
 
     if show_plot:

@@ -310,11 +310,11 @@ class Sobolev3D(HilbertSpace):
         # ── Branch 2: SumLinearForm (recursive) ─────────────────────────────
         from pygeoinf3d.spaces.forms import SumLinearForm  # avoid top-level circular
         if isinstance(fp, SumLinearForm):
-            if fp.domain is not self._base_space:
+            if fp.domain is not self._base_space and fp.domain is not self:
                 raise ValueError(
-                    "Sobolev3D.from_dual: the SumLinearForm was constructed on "
-                    "a different Lebesgue3D instance than this Sobolev3D's "
-                    "base_space.  Dual elements cannot cross space boundaries."
+                    "Sobolev3D.from_dual: the SumLinearForm was not constructed on "
+                    "this Sobolev3D or its base_space.  "
+                    "Dual elements cannot cross space boundaries."
                 )
             result = self._base_space.zero
             for c_i, form_i in fp.terms:
@@ -327,11 +327,11 @@ class Sobolev3D(HilbertSpace):
         # ── Branch 3: General LinearForm (spectral representer) ─────────────
         from pygeoinf import LinearForm as _LinearForm
         if isinstance(fp, _LinearForm):
-            if fp.domain is not self._base_space:
+            if fp.domain is not self._base_space and fp.domain is not self:
                 raise ValueError(
-                    "Sobolev3D.from_dual: the LinearForm was constructed on "
-                    "a different Lebesgue3D instance than this Sobolev3D's "
-                    "base_space.  Dual elements cannot cross space boundaries."
+                    "Sobolev3D.from_dual: the LinearForm was not constructed on "
+                    "this Sobolev3D or its base_space.  "
+                    "Dual elements cannot cross space boundaries."
                 )
             from pygeoinf3d.operators.base import SpectralOperator3D
             if not isinstance(self._inverse_weight, SpectralOperator3D):

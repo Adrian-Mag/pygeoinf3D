@@ -37,6 +37,9 @@ from .operators.sola import SOLAOperator3D
 # Sampling — KL expansion sampler for Gaussian measures
 from .sampling import KLSampler3D
 
+# Visualization — interactive path viewer
+from .plot import plot_paths3d_interactive
+
 # Lebesgue coefficient architecture Phase 1 — representation boundary
 # Lebesgue coefficient architecture Phase 2 — Gram-aware backends
 from .representations import (
@@ -79,6 +82,8 @@ __all__ = [
     "SOLAOperator3D",
     # Sampling
     "KLSampler3D",
+    # Visualization helpers
+    "plot_paths3d_interactive",
     # Phase 4 — Representation boundary
     "CoefficientRepresentation3D",
     "LebesgueRepresentation3D",
