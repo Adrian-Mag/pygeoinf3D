@@ -224,6 +224,10 @@ class GeneralizedBoxLaplacian(SpectralPowerBase3D):
 
         where $\\mu_k = (\\alpha\\lambda_k)^s$ (or ``0`` for suppressed modes).
 
+        The coefficients and synthesis are computed via batch matrix operations
+        using :meth:`~pygeoinf3d.providers.tensor_product.BoxLaplacianSpectrumProvider.evaluate_all_eigenfunctions`
+        to avoid Python loops over modes.
+
         Parameters
         ----------
         f : :class:`~pygeoinf3d.core.functions.Function3D`
@@ -237,26 +241,27 @@ class GeneralizedBoxLaplacian(SpectralPowerBase3D):
         # Evaluate f at all quadrature points once
         f_vals = np.asarray(f(self._pts), dtype=float)
 
-        # Compute spectral coefficients c_k = <f, phi_k> = ∫ f * phi_k dV
-        coeffs = []
-        for phi_k in self._eigenfunctions:
-            phi_vals = np.asarray(phi_k(self._pts), dtype=float)
-            c_k = float(np.dot(f_vals * phi_vals, self._weights))
-            coeffs.append(c_k)
+        # Batch evaluate all eigenfunctions at quadrature points: shape (N, n_pts)
+        Phi_quad = self._provider.evaluate_all_eigenfunctions(self._pts)
 
-        # Snapshot for closure: (mu_k, phi_k, c_k)
-        modes_snapshot = list(zip(self._op_eigenvalues, self._eigenfunctions, coeffs))
+        # Compute all spectral coefficients at once: c_k = <f, phi_k>_L2
+        # Phi_quad shape (N, n_pts), (f_vals * weights) shape (n_pts,)
+        coeffs = Phi_quad @ (f_vals * self._weights)  # shape (N,)
+
+        # Pre-compute alpha_k = mu_k * c_k for the synthesis step
+        mu = np.array(self._op_eigenvalues)
+        alpha = mu * coeffs  # shape (N,)
+
+        # Capture provider reference for the closure (avoids capturing self)
+        provider = self._provider
 
         def evaluate(x: np.ndarray) -> Union[float, np.ndarray]:
             x = np.asarray(x, dtype=float)
-            is_batch = x.ndim == 2
-            if is_batch:
-                total = np.zeros(len(x))
-            else:
-                total = 0.0
-            for mu_k, phi_k, c_k in modes_snapshot:
-                total = total + mu_k * c_k * phi_k(x)
-            return total
+            is_single = x.ndim == 1
+            pts = x[None, :] if is_single else x
+            Phi = provider.evaluate_all_eigenfunctions(pts)  # (N, n_pts)
+            result = alpha @ Phi  # (n_pts,)
+            return float(result[0]) if is_single else result
 
         return Function3D(
             self._space.function_domain,
