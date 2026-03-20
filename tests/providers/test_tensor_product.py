@@ -314,3 +314,63 @@ class TestNormalizationOrthogonality:
             ip = self._ip(unit_box, phi, phi)
             npt.assert_almost_equal(ip, 1.0, decimal=2,
                                     err_msg=f"Mode {i} norm^2 = {ip:.6f}")
+
+
+# ---------------------------------------------------------------------------
+# Tests for evaluate_all_eigenfunctions (batch evaluation)
+# ---------------------------------------------------------------------------
+
+class TestEvaluateAllEigenfunctions:
+    """Tests for BoxLaplacianSpectrumProvider.evaluate_all_eigenfunctions."""
+
+    @pytest.fixture
+    def random_pts(self):
+        rng = np.random.default_rng(123)
+        return rng.uniform(0, 1, size=(50, 3))
+
+    @pytest.mark.parametrize("bc_type", ["neumann", "dirichlet"])
+    def test_matches_individual(self, unit_box, random_pts, bc_type):
+        """Batch result matches per-mode get_eigenfunction(k)(pts)."""
+        p = BoxLaplacianSpectrumProvider(
+            unit_box, truncation=(3, 3, 3), bc_type=bc_type,
+        )
+        batch = p.evaluate_all_eigenfunctions(random_pts)
+        assert batch.shape == (p.dim, len(random_pts))
+        for k in range(p.dim):
+            expected = p.get_eigenfunction(k)(random_pts)
+            npt.assert_allclose(
+                batch[k], expected, atol=1e-12,
+                err_msg=f"Mode {k} mismatch for {bc_type}",
+            )
+
+    @pytest.mark.parametrize("bc_type", ["neumann", "dirichlet"])
+    def test_shape(self, unit_box, random_pts, bc_type):
+        """Output has shape (dim, n_points)."""
+        p = BoxLaplacianSpectrumProvider(
+            unit_box, truncation=(4, 4, 4), bc_type=bc_type,
+        )
+        result = p.evaluate_all_eigenfunctions(random_pts)
+        assert result.shape == (p.dim, len(random_pts))
+
+    def test_single_point(self, unit_box):
+        """Single point input (shape (3,)) works."""
+        p = BoxLaplacianSpectrumProvider(
+            unit_box, truncation=(2, 2, 2), bc_type="neumann",
+        )
+        pt = np.array([0.5, 0.5, 0.5])
+        result = p.evaluate_all_eigenfunctions(pt)
+        assert result.shape == (p.dim, 1)
+        for k in range(p.dim):
+            npt.assert_allclose(
+                result[k, 0], p.get_eigenfunction(k)(pt), atol=1e-12,
+            )
+
+    def test_get_all_eigenvalues(self, unit_box):
+        """get_all_eigenvalues returns correct shape and values."""
+        p = BoxLaplacianSpectrumProvider(
+            unit_box, truncation=(3, 3, 3), bc_type="neumann",
+        )
+        evs = p.get_all_eigenvalues()
+        assert evs.shape == (p.dim,)
+        for k in range(p.dim):
+            npt.assert_allclose(evs[k], p.get_eigenvalue(k), atol=1e-14)

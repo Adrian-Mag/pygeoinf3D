@@ -58,6 +58,34 @@ def _1d_eigenvalue(k: int, L: float) -> float:
     return float((k * np.pi / L) ** 2)
 
 
+def _eval_1d_basis(
+    xs: np.ndarray,
+    a: float,
+    L: float,
+    n_modes: int,
+    bc_type: str,
+) -> np.ndarray:
+    """Return the ``(len(xs), n_modes)`` matrix of 1-D basis values.
+
+    For Neumann BCs the columns correspond to modes ``k = 0, 1, ..., n_modes-1``.
+    For Dirichlet BCs they correspond to ``k = 1, 2, ..., n_modes``.
+    """
+    xs = np.asarray(xs, dtype=float).ravel()
+    n = len(xs)
+    if bc_type == "neumann":
+        result = np.empty((n, n_modes))
+        result[:, 0] = 1.0 / np.sqrt(L)
+        if n_modes > 1:
+            k_arr = np.arange(1, n_modes, dtype=float)
+            angles = np.pi * np.outer((xs - a) / L, k_arr)
+            result[:, 1:] = np.sqrt(2.0 / L) * np.cos(angles)
+    else:
+        k_arr = np.arange(1, n_modes + 1, dtype=float)
+        angles = np.pi * np.outer((xs - a) / L, k_arr)
+        result = np.sqrt(2.0 / L) * np.sin(angles)
+    return result
+
+
 def _make_1d_phi(
     k: int,
     a: float,
@@ -346,6 +374,54 @@ class BoxLaplacianSpectrumProvider:
             return phi_x(x[:, 0]) * phi_y(x[:, 1]) * phi_z(x[:, 2])
 
         return Function3D(self._box, evaluate_callable=evaluate)
+
+    def evaluate_all_eigenfunctions(self, points: np.ndarray) -> np.ndarray:
+        r"""Batch-evaluate all eigenfunctions at a set of points.
+
+        Uses vectorized 1-D basis evaluation (no Python loop over modes).
+        Much faster than calling ``get_eigenfunction(k)(pts)`` in a loop.
+
+        Parameters
+        ----------
+        points:
+            Array of shape ``(n_points, 3)`` of evaluation coordinates.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape ``(dim, n_points)`` where ``result[k, :]`` is
+            the *k*-th eigenfunction evaluated at all *points*, in the
+            same mode ordering as :meth:`get_eigenfunction`.
+        """
+        points = np.asarray(points, dtype=float)
+        if points.ndim == 1:
+            points = points[None, :]
+
+        ax, ay, az = self._low
+        Lx, Ly, Lz = self._lengths
+        nx, ny, nz = self._truncation
+        bc = self._bc_type
+
+        # (n_points, n_modes_axis) for each axis
+        Bx = _eval_1d_basis(points[:, 0], ax, Lx, nx, bc)
+        By = _eval_1d_basis(points[:, 1], ay, Ly, ny, bc)
+        Bz = _eval_1d_basis(points[:, 2], az, Lz, nz, bc)
+
+        # Build (dim, n_points) in sorted mode order
+        n_points = points.shape[0]
+        result = np.empty((self.dim, n_points))
+
+        kmin = 0 if bc == "neumann" else 1
+        for flat_idx, (kx, ky, kz) in enumerate(self._sorted_modes):
+            result[flat_idx, :] = (
+                Bx[:, kx - kmin] * By[:, ky - kmin] * Bz[:, kz - kmin]
+            )
+
+        return result
+
+    def get_all_eigenvalues(self) -> np.ndarray:
+        """Return all eigenvalues as a 1-D array of shape ``(dim,)``."""
+        return np.array(self._sorted_eigenvalues)
 
     def get_function(self, index: int) -> "Function3D":
         """Return the *index*-th function in the provider.
