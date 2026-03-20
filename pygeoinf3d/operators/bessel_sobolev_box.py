@@ -55,7 +55,7 @@ import numpy as np
 
 from pygeoinf3d.core.functions import Function3D
 from pygeoinf3d.operators.spectral_power_base import SpectralPowerBase3D
-from pygeoinf3d.providers.tensor_product import TensorProductProvider
+from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
 
 
@@ -136,7 +136,7 @@ class BesselSobolevBox(SpectralPowerBase3D):
         Any provider exposing ``dim``, ``get_eigenvalue(i)``, and
         ``get_eigenfunction(i)``. The returned eigenfunctions must live on the
         same domain object as ``space.function_domain``. If the provider is a
-        :class:`~pygeoinf3d.providers.tensor_product.TensorProductProvider`, a
+        :class:`~pygeoinf3d.providers.tensor_product.BoxLaplacianSpectrumProvider`, a
         tensor-product fast path is enabled automatically when the quadrature is
         compatible.
     shift:
@@ -230,7 +230,7 @@ class BesselSobolevBox(SpectralPowerBase3D):
 
         self._fast_path_enabled = False
         if (
-            isinstance(provider, TensorProductProvider)
+            isinstance(provider, BoxLaplacianSpectrumProvider)
             and quad_location == "cell_centers"
         ):
             Nx, Ny, Nz = _parse_resolution3d(quad_resolution)
@@ -279,7 +279,7 @@ class BesselSobolevBox(SpectralPowerBase3D):
         """Apply the Bessel-Sobolev operator to *f*.
 
         Uses the generic box quadrature configured at construction time. When
-        the provider is a :class:`TensorProductProvider` and the quadrature is
+        the provider is a :class:`BoxLaplacianSpectrumProvider` and the quadrature is
         compatible, an internal tensor-product fast path is used; otherwise the
         method falls back to the provider-agnostic spectral projection loop.
         """

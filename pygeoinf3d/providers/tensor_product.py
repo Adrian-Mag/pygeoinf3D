@@ -1,6 +1,6 @@
 """Tensor-product spectral provider for axis-aligned box domains.
 
-Provides :class:`TensorProductProvider`, a minimal spectral basis
+Provides :class:`BoxLaplacianSpectrumProvider`, a minimal spectral basis
 manager for the negative Laplacian $-\\Delta$ on an axis-aligned box
 with uniform homogeneous Dirichlet or Neumann boundary conditions.
 
@@ -104,10 +104,10 @@ def _make_1d_phi(
 
 
 # ---------------------------------------------------------------------------
-# TensorProductProvider
+# BoxLaplacianSpectrumProvider
 # ---------------------------------------------------------------------------
 
-class TensorProductProvider:
+class BoxLaplacianSpectrumProvider:
     """Tensor-product spectral provider for a box domain.
 
     Enumerates the first ``n_x × n_y × n_z`` modes of the negative Laplacian on
@@ -139,7 +139,7 @@ class TensorProductProvider:
     ::
 
         box = BoxDomain(np.zeros(3), np.ones(3))
-        provider = TensorProductProvider(
+        provider = BoxLaplacianSpectrumProvider(
             box,
             truncation=(4, 4, 4),
             bc_type='dirichlet',
@@ -185,7 +185,7 @@ class TensorProductProvider:
         self._lengths = bbox.extents  # (Lx, Ly, Lz)
         if np.any(self._lengths <= 0.0):
             raise ValueError(
-                "TensorProductProvider requires positive box extents."
+                "BoxLaplacianSpectrumProvider requires positive box extents."
             )
 
         # Build and sort mode list
@@ -286,7 +286,7 @@ class TensorProductProvider:
         if key not in self._mode_to_index:
             raise KeyError(
                 f"Multi-index {multi_index} not found in this "
-                "TensorProductProvider."
+                "BoxLaplacianSpectrumProvider."
             )
         return self._mode_to_index[key]
 
@@ -350,7 +350,7 @@ class TensorProductProvider:
     def get_function(self, index: int) -> "Function3D":
         """Return the *index*-th function in the provider.
 
-        For ``TensorProductProvider`` this is the same as
+        For ``BoxLaplacianSpectrumProvider`` this is the same as
         :meth:`get_eigenfunction`. The alias lets generic function-provider
         consumers avoid spectral naming assumptions.
         """
@@ -363,9 +363,13 @@ class TensorProductProvider:
 
     def __repr__(self) -> str:
         return (
-            f"TensorProductProvider("
+            f"BoxLaplacianSpectrumProvider("
             f"box={self._box!r}, "
             f"truncation={self._truncation}, "
             f"bc_type={self._bc_type!r}, "
             f"dim={self.dim})"
         )
+
+
+# Backward-compatibility alias — use BoxLaplacianSpectrumProvider in new code.
+TensorProductProvider = BoxLaplacianSpectrumProvider

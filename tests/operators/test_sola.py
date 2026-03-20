@@ -469,9 +469,9 @@ class TestSOLAProviderBacked:
         codomain dimension.
         """
         from pygeoinf3d.providers.base import FunctionToKernelAdapter
-        from pygeoinf3d.providers.tensor_product import TensorProductProvider
+        from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
 
-        provider = TensorProductProvider(
+        provider = BoxLaplacianSpectrumProvider(
             unit_box, truncation=2, bc_type='dirichlet'
         )
         adapter = FunctionToKernelAdapter(provider, space)
@@ -492,9 +492,9 @@ class TestSOLAProviderBacked:
         for a constant test function.
         """
         from pygeoinf3d.providers.base import FunctionToKernelAdapter
-        from pygeoinf3d.providers.tensor_product import TensorProductProvider
+        from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
 
-        provider = TensorProductProvider(
+        provider = BoxLaplacianSpectrumProvider(
             unit_box, truncation=2, bc_type='dirichlet'
         )
         m = provider.dim  # 8 modes
@@ -526,9 +526,9 @@ class TestSOLAProviderBacked:
         more than once per index, and the returned objects are identity-equal.
         """
         from pygeoinf3d.providers.base import FunctionToKernelAdapter
-        from pygeoinf3d.providers.tensor_product import TensorProductProvider
+        from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
 
-        provider = TensorProductProvider(
+        provider = BoxLaplacianSpectrumProvider(
             unit_box, truncation=2, bc_type='dirichlet'
         )
         adapter = FunctionToKernelAdapter(provider, space)

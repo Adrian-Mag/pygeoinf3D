@@ -18,7 +18,7 @@ import numpy as np
 import numpy.testing as npt
 
 from pygeoinf3d.geometries.box.domain import BoxDomain
-from pygeoinf3d.providers.tensor_product import TensorProductProvider
+from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
 from pygeoinf3d.operators.bessel_sobolev_box import BesselSobolevBox
 from pygeoinf3d.operators.base import SpectralOperator3D
@@ -41,14 +41,14 @@ def space(unit_box):
 
 @pytest.fixture
 def dirichlet_provider(unit_box):
-    return TensorProductProvider(
+    return BoxLaplacianSpectrumProvider(
         unit_box, truncation=(3, 3, 3), bc_type='dirichlet'
     )
 
 
 @pytest.fixture
 def neumann_provider(unit_box):
-    return TensorProductProvider(
+    return BoxLaplacianSpectrumProvider(
         unit_box, truncation=(3, 3, 3), bc_type='neumann'
     )
 
@@ -137,7 +137,7 @@ class TestConstructorValidation:
     def test_raises_domain_mismatch(self, space, dirichlet_provider):
         """Provider box differs from space domain → ValueError."""
         other_box = BoxDomain(np.zeros(3), 2.0 * np.ones(3))
-        other_provider = TensorProductProvider(
+        other_provider = BoxLaplacianSpectrumProvider(
             other_box, truncation=(3, 3, 3), bc_type='dirichlet'
         )
         with pytest.raises(ValueError):

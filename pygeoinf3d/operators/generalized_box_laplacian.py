@@ -54,7 +54,7 @@ import numpy as np
 from pygeoinf3d.core.functions import Function3D
 from pygeoinf3d.operators.spectral_power_base import SpectralPowerBase3D
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
-from pygeoinf3d.providers.tensor_product import TensorProductProvider
+from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
 
 
 class GeneralizedBoxLaplacian(SpectralPowerBase3D):
@@ -63,7 +63,7 @@ class GeneralizedBoxLaplacian(SpectralPowerBase3D):
     Represents integer powers of the positive box Laplacian.  The operator
     eigenvalues are $(\\alpha \\lambda_k)^s$ where $\\lambda_k$ are the
     Laplacian eigenvalues provided by a
-    :class:`~pygeoinf3d.providers.tensor_product.TensorProductProvider`.
+    :class:`~pygeoinf3d.providers.tensor_product.BoxLaplacianSpectrumProvider`.
 
     For negative powers, modes with ``|lambda_k| < eigenvalue_tol`` are
     suppressed to zero (pseudoinverse / mean-zero projection).
@@ -74,7 +74,7 @@ class GeneralizedBoxLaplacian(SpectralPowerBase3D):
         The :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` on the box domain.
         Both the operator's domain and codomain are this space.
     provider:
-        A :class:`~pygeoinf3d.providers.tensor_product.TensorProductProvider`
+        A :class:`~pygeoinf3d.providers.tensor_product.BoxLaplacianSpectrumProvider`
         whose box domain matches ``space.function_domain``.
     power:
         Integer power $s$.  ``power=0`` gives the identity, ``power=1`` is
@@ -105,14 +105,14 @@ class GeneralizedBoxLaplacian(SpectralPowerBase3D):
     ::
 
         from pygeoinf3d.geometries.box.domain import BoxDomain
-        from pygeoinf3d.providers.tensor_product import TensorProductProvider
+        from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
         from pygeoinf3d.spaces.lebesgue import Lebesgue3D
         from pygeoinf3d.operators.generalized_box_laplacian import GeneralizedBoxLaplacian
         import numpy as np
 
         box      = BoxDomain(np.zeros(3), np.ones(3))
         space    = Lebesgue3D(box)
-        provider = TensorProductProvider(box, truncation=(4, 4, 4), bc_type='dirichlet')
+        provider = BoxLaplacianSpectrumProvider(box, truncation=(4, 4, 4), bc_type='dirichlet')
 
         # Power=2 Laplacian: eigenvalues = lambda_k^2, full apply supported
         op = GeneralizedBoxLaplacian(space, provider, power=2)
@@ -127,7 +127,7 @@ class GeneralizedBoxLaplacian(SpectralPowerBase3D):
     def __init__(
         self,
         space: Lebesgue3D,
-        provider: TensorProductProvider,
+        provider: BoxLaplacianSpectrumProvider,
         *,
         power: int,
         alpha: float = 1.0,

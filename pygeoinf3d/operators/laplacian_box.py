@@ -5,7 +5,7 @@ Provides :class:`BoxLaplacian`, a
 negative Laplacian $-\\Delta$ on a
 :class:`~pygeoinf3d.geometries.box.domain.BoxDomain` via truncated
 spectral projection through a
-:class:`~pygeoinf3d.providers.tensor_product.TensorProductProvider`.
+:class:`~pygeoinf3d.providers.tensor_product.BoxLaplacianSpectrumProvider`.
 
 Mathematical definition
 -----------------------
@@ -36,14 +36,14 @@ Usage
 ::
 
     from pygeoinf3d.geometries.box.domain import BoxDomain
-    from pygeoinf3d.providers.tensor_product import TensorProductProvider
+    from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
     from pygeoinf3d.spaces.lebesgue import Lebesgue3D
     from pygeoinf3d.operators.laplacian_box import BoxLaplacian
     import numpy as np
 
     box = BoxDomain(np.zeros(3), np.ones(3))
     space = Lebesgue3D(box)
-    provider = TensorProductProvider(
+    provider = BoxLaplacianSpectrumProvider(
         box,
         truncation=(4, 4, 4),
         bc_type='dirichlet',
@@ -67,7 +67,7 @@ from __future__ import annotations
 
 from pygeoinf3d.operators.generalized_box_laplacian import GeneralizedBoxLaplacian
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
-from pygeoinf3d.providers.tensor_product import TensorProductProvider
+from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
 
 
 class BoxLaplacian(GeneralizedBoxLaplacian):
@@ -82,7 +82,7 @@ class BoxLaplacian(GeneralizedBoxLaplacian):
           \\langle f, \\Phi_k \\rangle_{L^2}\\, \\Phi_k(\\mathbf{x})
 
     via the eigenfunctions provided by a
-    :class:`~pygeoinf3d.providers.tensor_product.TensorProductProvider`.
+    :class:`~pygeoinf3d.providers.tensor_product.BoxLaplacianSpectrumProvider`.
 
     Parameters
     ----------
@@ -90,7 +90,7 @@ class BoxLaplacian(GeneralizedBoxLaplacian):
         The :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` on the box domain.
         Both the operator's domain and codomain are this space.
     provider:
-        A :class:`~pygeoinf3d.providers.tensor_product.TensorProductProvider`
+        A :class:`~pygeoinf3d.providers.tensor_product.BoxLaplacianSpectrumProvider`
         whose box domain matches ``space.function_domain``.
     quad_resolution:
         Resolution passed to
@@ -117,7 +117,7 @@ class BoxLaplacian(GeneralizedBoxLaplacian):
     def __init__(
         self,
         space: Lebesgue3D,
-        provider: TensorProductProvider,
+        provider: BoxLaplacianSpectrumProvider,
         quad_resolution: int = 20,
     ) -> None:
         super().__init__(

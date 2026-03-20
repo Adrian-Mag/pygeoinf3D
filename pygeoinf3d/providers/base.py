@@ -7,7 +7,7 @@ demand, and :class:`KernelProvider3D` for
 
 Also provides :class:`FunctionToKernelAdapter`, a small adapter that wraps
 any :class:`FunctionProvider3D` (e.g.
-:class:`~pygeoinf3d.providers.tensor_product.TensorProductProvider`) into a
+:class:`~pygeoinf3d.providers.tensor_product.BoxLaplacianSpectrumProvider`) into a
 :class:`KernelProvider3D` by binding each produced
 :class:`~pygeoinf3d.core.functions.Function3D` to a given
 :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D`.
@@ -94,7 +94,7 @@ class FunctionToKernelAdapter(KernelProvider3D):
 
     Wraps any object that exposes ``dim: int`` and
     ``get_function(i) -> Function3D`` (e.g.
-    :class:`~pygeoinf3d.providers.tensor_product.TensorProductProvider`)
+    :class:`~pygeoinf3d.providers.tensor_product.BoxLaplacianSpectrumProvider`)
     by binding each produced function to a
     :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D`
     space to form a :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D`.
@@ -104,7 +104,7 @@ class FunctionToKernelAdapter(KernelProvider3D):
     function_provider:
         Any object with ``dim: int`` and
         ``get_function(i: int) -> Function3D``.  Typically a
-        :class:`~pygeoinf3d.providers.tensor_product.TensorProductProvider`.
+        :class:`~pygeoinf3d.providers.tensor_product.BoxLaplacianSpectrumProvider`.
     space:
         The :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` to which each
         produced function is bound.  Its ``function_domain`` must be the

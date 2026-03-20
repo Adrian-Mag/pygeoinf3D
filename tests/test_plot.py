@@ -550,12 +550,12 @@ def test_compare_function3d_axis_sliders_requires_plotly(
 def kl_sampler(box_domain):
     """KLSampler3D with tensor-product structure for fast-path testing."""
     from pygeoinf3d.spaces.lebesgue import Lebesgue3D
-    from pygeoinf3d.providers.tensor_product import TensorProductProvider
+    from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
     from pygeoinf3d.operators.inverse_laplacian_box import InverseBoxLaplacian
     from pygeoinf3d.sampling import KLSampler3D
 
     space = Lebesgue3D(box_domain)
-    provider = TensorProductProvider(
+    provider = BoxLaplacianSpectrumProvider(
         box_domain, truncation=(3, 3, 3), bc_type='dirichlet'
     )
     inv_lap = InverseBoxLaplacian(space, provider)

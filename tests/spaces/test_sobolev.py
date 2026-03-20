@@ -502,12 +502,12 @@ class TestSobolev3DBesselSobolevBoxCompatibility:
 
     def test_construct_with_bessel_sobolev_box(self):
         from pygeoinf3d.geometries.box.domain import BoxDomain
-        from pygeoinf3d.providers.tensor_product import TensorProductProvider
+        from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
         from pygeoinf3d.operators.bessel_sobolev_box import BesselSobolevBox
 
         box = BoxDomain(np.zeros(3), np.ones(3))
         space = Lebesgue3D(box)
-        provider = TensorProductProvider(
+        provider = BoxLaplacianSpectrumProvider(
             box, truncation=(3, 3, 3), bc_type="neumann"
         )
 
@@ -523,12 +523,12 @@ class TestSobolev3DBesselSobolevBoxCompatibility:
     def test_roundtrip_with_bessel_sobolev_box(self):
         """from_dual(to_dual(f)) ≈ f when weight = BesselSobolevBox."""
         from pygeoinf3d.geometries.box.domain import BoxDomain
-        from pygeoinf3d.providers.tensor_product import TensorProductProvider
+        from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
         from pygeoinf3d.operators.bessel_sobolev_box import BesselSobolevBox
 
         box = BoxDomain(np.zeros(3), np.ones(3))
         space = Lebesgue3D(box)
-        provider = TensorProductProvider(
+        provider = BoxLaplacianSpectrumProvider(
             box, truncation=(4, 4, 4), bc_type="neumann"
         )
 
@@ -557,12 +557,12 @@ class TestSobolev3DBesselSobolevBoxCompatibility:
     def test_inner_product_positive_definite_with_bessel(self):
         """⟨f, f⟩_H > 0 with BesselSobolevBox weight."""
         from pygeoinf3d.geometries.box.domain import BoxDomain
-        from pygeoinf3d.providers.tensor_product import TensorProductProvider
+        from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
         from pygeoinf3d.operators.bessel_sobolev_box import BesselSobolevBox
 
         box = BoxDomain(np.zeros(3), np.ones(3))
         space = Lebesgue3D(box)
-        provider = TensorProductProvider(
+        provider = BoxLaplacianSpectrumProvider(
             box, truncation=(3, 3, 3), bc_type="neumann"
         )
 
@@ -593,12 +593,12 @@ class TestSobolev3DFromDualSpectral:
     @pytest.fixture
     def sobolev_bessel(self):
         from pygeoinf3d.geometries.box.domain import BoxDomain
-        from pygeoinf3d.providers.tensor_product import TensorProductProvider
+        from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
         from pygeoinf3d.operators.bessel_sobolev_box import BesselSobolevBox
 
         box = BoxDomain(np.zeros(3), np.ones(3))
         space = Lebesgue3D(box)
-        provider = TensorProductProvider(box, truncation=(5, 5, 5), bc_type="neumann")
+        provider = BoxLaplacianSpectrumProvider(box, truncation=(5, 5, 5), bc_type="neumann")
         w = BesselSobolevBox(space, provider, shift=1.0, order=4.0)
         w_inv = BesselSobolevBox(space, provider, shift=1.0, order=-4.0)
         return Sobolev3D(space, w, w_inv)

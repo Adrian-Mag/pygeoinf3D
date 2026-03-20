@@ -15,7 +15,7 @@ import numpy.testing as npt
 import pytest
 
 from pygeoinf3d.geometries.box.domain import BoxDomain
-from pygeoinf3d.providers.tensor_product import TensorProductProvider
+from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
 from pygeoinf3d.operators.generalized_box_laplacian import GeneralizedBoxLaplacian
 from pygeoinf3d.operators.laplacian_box import BoxLaplacian
@@ -40,12 +40,12 @@ def space(unit_box):
 
 @pytest.fixture(scope="module")
 def dirichlet_provider(unit_box):
-    return TensorProductProvider(unit_box, truncation=(3, 3, 3), bc_type='dirichlet')
+    return BoxLaplacianSpectrumProvider(unit_box, truncation=(3, 3, 3), bc_type='dirichlet')
 
 
 @pytest.fixture(scope="module")
 def neumann_provider(unit_box):
-    return TensorProductProvider(unit_box, truncation=(3, 3, 3), bc_type='neumann')
+    return BoxLaplacianSpectrumProvider(unit_box, truncation=(3, 3, 3), bc_type='neumann')
 
 
 # ---------------------------------------------------------------------------

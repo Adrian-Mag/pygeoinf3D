@@ -5,7 +5,7 @@ Provides :class:`InverseBoxLaplacian`, a
 spectral pseudo-inverse of the negative Laplacian $-\\Delta$ on a
 :class:`~pygeoinf3d.geometries.box.domain.BoxDomain` via truncated
 spectral projection through a
-:class:`~pygeoinf3d.providers.tensor_product.TensorProductProvider`.
+:class:`~pygeoinf3d.providers.tensor_product.BoxLaplacianSpectrumProvider`.
 
 Mathematical definition
 -----------------------
@@ -39,14 +39,14 @@ Usage
 ::
 
     from pygeoinf3d.geometries.box.domain import BoxDomain
-    from pygeoinf3d.providers.tensor_product import TensorProductProvider
+    from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
     from pygeoinf3d.spaces.lebesgue import Lebesgue3D
     from pygeoinf3d.operators.inverse_laplacian_box import InverseBoxLaplacian
     import numpy as np
 
     box = BoxDomain(np.zeros(3), np.ones(3))
     space = Lebesgue3D(box)
-    provider = TensorProductProvider(
+    provider = BoxLaplacianSpectrumProvider(
         box,
         truncation=(4, 4, 4),
         bc_type='dirichlet',
@@ -68,7 +68,7 @@ from pygeoinf3d.core.functions import Function3D
 from pygeoinf3d.operators.base import SpectralOperator3D
 from pygeoinf3d.operators.generalized_box_laplacian import GeneralizedBoxLaplacian
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
-from pygeoinf3d.providers.tensor_product import TensorProductProvider
+from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
 
 
 class InverseBoxLaplacian(SpectralOperator3D):
@@ -83,7 +83,7 @@ class InverseBoxLaplacian(SpectralOperator3D):
           \\langle f, \\Phi_k \\rangle_{L^2}\\, \\Phi_k(\\mathbf{x})
 
     via the eigenfunctions provided by a
-    :class:`~pygeoinf3d.providers.tensor_product.TensorProductProvider`.
+    :class:`~pygeoinf3d.providers.tensor_product.BoxLaplacianSpectrumProvider`.
 
     Parameters
     ----------
@@ -91,7 +91,7 @@ class InverseBoxLaplacian(SpectralOperator3D):
         The :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` on the box domain.
         Both the operator's domain and codomain are this space.
     provider:
-        A :class:`~pygeoinf3d.providers.tensor_product.TensorProductProvider`
+        A :class:`~pygeoinf3d.providers.tensor_product.BoxLaplacianSpectrumProvider`
         whose box domain matches ``space.function_domain``.
     null_space_handling:
         How to handle eigenvalues near zero:
@@ -140,7 +140,7 @@ class InverseBoxLaplacian(SpectralOperator3D):
     def __init__(
         self,
         space: Lebesgue3D,
-        provider: TensorProductProvider,
+        provider: BoxLaplacianSpectrumProvider,
         null_space_handling: Literal['pseudoinverse', 'shift', 'strict'] = 'pseudoinverse',
         shift: float = 1.0,
         eigenvalue_tol: float = 1e-10,

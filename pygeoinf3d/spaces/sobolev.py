@@ -116,9 +116,9 @@ class Sobolev3D(HilbertSpace):
     Using :class:`~pygeoinf3d.operators.bessel_sobolev_box.BesselSobolevBox`
     as the weight operator::
 
-        from pygeoinf3d import TensorProductProvider, BesselSobolevBox
+        from pygeoinf3d import BoxLaplacianSpectrumProvider, BesselSobolevBox
 
-        provider = TensorProductProvider(box, truncation=(8, 8, 8),
+        provider = BoxLaplacianSpectrumProvider(box, truncation=(8, 8, 8),
                                          bc_type='neumann')
         W    = BesselSobolevBox(space, provider, shift=1.0, order=2.0)
         Winv = BesselSobolevBox(space, provider, shift=1.0, order=-2.0)

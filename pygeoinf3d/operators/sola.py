@@ -78,9 +78,9 @@ Sequence-backed (eager)::
 Provider-backed (lazy + cached)::
 
     from pygeoinf3d.providers.base import FunctionToKernelAdapter
-    from pygeoinf3d.providers.tensor_product import TensorProductProvider
+    from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
 
-    provider = TensorProductProvider(box, truncation=4, bc_type='dirichlet')
+    provider = BoxLaplacianSpectrumProvider(box, truncation=4, bc_type='dirichlet')
     adapter = FunctionToKernelAdapter(provider, space)
     codomain = EuclideanSpace(adapter.dim)
     A = SOLAOperator3D(space, codomain, adapter)

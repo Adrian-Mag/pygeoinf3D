@@ -14,7 +14,7 @@ from pygeoinf import (
     LinearMinimumNormInversion, EigenSolver,
 )
 from pygeoinf3d import BoxDomain, Lebesgue3D, Function3D, SOLAOperator3D
-from pygeoinf3d.providers.tensor_product import TensorProductProvider
+from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
 from pygeoinf3d.operators.bessel_sobolev_box import BesselSobolevBox
 from pygeoinf3d.spaces.sobolev import Sobolev3D
 from pygeoinf3d.spaces.forms import PathIntegralFunctional
@@ -25,7 +25,7 @@ np.random.seed(42)
 # --- 1. Domain and Sobolev space ---
 box = BoxDomain(np.zeros(3), np.ones(3))
 base_space = Lebesgue3D(box)
-provider = TensorProductProvider(box, truncation=(6, 6, 6), bc_type="neumann")
+provider = BoxLaplacianSpectrumProvider(box, truncation=(6, 6, 6), bc_type="neumann")
 W     = BesselSobolevBox(base_space, provider, shift=1.0, order=4.0)
 W_inv = BesselSobolevBox(base_space, provider, shift=1.0, order=-4.0)
 sobolev = Sobolev3D(base_space, W, W_inv)

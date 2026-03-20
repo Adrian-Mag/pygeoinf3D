@@ -1,7 +1,7 @@
 """Tests for pygeoinf3d.operators.laplacian_box.BoxLaplacian.
 
 Covers:
-- Construction from TensorProductProvider and Lebesgue3D space
+- Construction from BoxLaplacianSpectrumProvider and Lebesgue3D space
 - Is a LinearOperator between Lebesgue3D spaces
 - Eigenfunction eigenpair test: L(phi_k) ≈ lambda_k * phi_k  (pointwise)
 - Low-mode regression: known eigenvalues for Dirichlet+Neumann on unit box
@@ -17,7 +17,7 @@ import numpy.testing as npt
 from pygeoinf.linear_operators import LinearOperator
 
 from pygeoinf3d.geometries.box.domain import BoxDomain
-from pygeoinf3d.providers.tensor_product import TensorProductProvider
+from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
 from pygeoinf3d.operators.laplacian_box import BoxLaplacian
 from pygeoinf3d.operators.base import SpectralOperator3D
@@ -40,7 +40,7 @@ def space(unit_box):
 
 @pytest.fixture
 def dirichlet_provider(unit_box):
-    return TensorProductProvider(
+    return BoxLaplacianSpectrumProvider(
         unit_box,
         truncation=(3, 3, 3),
         bc_type='dirichlet',
@@ -49,7 +49,7 @@ def dirichlet_provider(unit_box):
 
 @pytest.fixture
 def neumann_provider(unit_box):
-    return TensorProductProvider(
+    return BoxLaplacianSpectrumProvider(
         unit_box,
         truncation=(3, 3, 3),
         bc_type='neumann',

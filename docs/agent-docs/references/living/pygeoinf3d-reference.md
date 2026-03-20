@@ -143,6 +143,7 @@ pygeoinf3D/
 │   ├── bessel_sobolev_3d_demo.ipynb              # BesselSobolevBox (s>0: smoothing, s<0: covariance), Neumann BCs
 │   ├── pli_3d_demo.ipynb                         # End-to-end Bayesian PLI (prior-linked inversion) workflow
 │   ├── least_norm_inversion_demo.ipynb           # Noiseless minimum-norm inversion with SOLAOperator3D
+│   ├── noisy_path_form_least_norm_inversion_demo.ipynb  # Phase 1 scaffold for noisy boundary-to-top path-integral minimum-norm inversion
 │   ├── kl_sampler_prior_demo.ipynb               # KL samples from InverseBoxLaplacian prior (spectral-kl plan)
 │   ├── generalized_laplacian_covariance_demo.ipynb  # KL samples from (-αΔ)^s covariance, s<0
 │   └── path_integral_minimum_norm_demo.py        # End-to-end path-integral minimum-norm inversion (Phase 5)

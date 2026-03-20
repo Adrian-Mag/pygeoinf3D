@@ -1,4 +1,4 @@
-"""Tests for pygeoinf3d.providers.tensor_product.TensorProductProvider.
+"""Tests for pygeoinf3d.providers.tensor_product.BoxLaplacianSpectrumProvider.
 
 Covers:
 - Construction from BoxDomain
@@ -21,7 +21,7 @@ import numpy as np
 import numpy.testing as npt
 
 from pygeoinf3d.geometries.box.domain import BoxDomain
-from pygeoinf3d.providers.tensor_product import TensorProductProvider
+from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
 from pygeoinf3d.core.functions import Function3D
 
@@ -38,7 +38,7 @@ def unit_box():
 @pytest.fixture
 def small_provider_dirichlet(unit_box):
     """2×2×2 Dirichlet provider on unit box."""
-    return TensorProductProvider(
+    return BoxLaplacianSpectrumProvider(
         unit_box,
         truncation=(2, 2, 2),
         bc_type='dirichlet',
@@ -48,7 +48,7 @@ def small_provider_dirichlet(unit_box):
 @pytest.fixture
 def small_provider_neumann(unit_box):
     """2×2×2 Neumann provider on unit box (modes 0..1 each axis)."""
-    return TensorProductProvider(
+    return BoxLaplacianSpectrumProvider(
         unit_box,
         truncation=(2, 2, 2),
         bc_type='neumann',
@@ -64,7 +64,7 @@ def unit_space(unit_box):
 # Construction
 # ---------------------------------------------------------------------------
 
-class TestTensorProductProviderConstruction:
+class TestBoxLaplacianSpectrumProviderConstruction:
 
     def test_construct_dirichlet(self, small_provider_dirichlet):
         assert small_provider_dirichlet is not None
@@ -74,7 +74,7 @@ class TestTensorProductProviderConstruction:
 
     def test_invalid_bc_type_raises(self, unit_box):
         with pytest.raises(ValueError):
-            TensorProductProvider(
+            BoxLaplacianSpectrumProvider(
                 unit_box,
                 truncation=(2, 2, 2),
                 bc_type='robin',
@@ -134,7 +134,7 @@ class TestEigenvalueOrdering:
 
     def test_dirichlet_first_mode_on_unit_box(self, unit_box):
         # On unit box, Dirichlet lowest eigenvalue = 3*pi^2
-        p = TensorProductProvider(
+        p = BoxLaplacianSpectrumProvider(
             unit_box,
             truncation=(3, 3, 3),
             bc_type='dirichlet',
@@ -144,7 +144,7 @@ class TestEigenvalueOrdering:
         npt.assert_almost_equal(ev0, expected, decimal=10)
 
     def test_dirichlet_first_multi_index_on_unit_box(self, unit_box):
-        p = TensorProductProvider(
+        p = BoxLaplacianSpectrumProvider(
             unit_box,
             truncation=(3, 3, 3),
             bc_type='dirichlet',
@@ -205,7 +205,7 @@ class TestEigenfunctions:
 
     def test_dirichlet_zero_on_x_min_face(self, unit_box):
         """Dirichlet eigenfunctions vanish on x=0."""
-        p = TensorProductProvider(
+        p = BoxLaplacianSpectrumProvider(
             unit_box,
             truncation=(2, 2, 2),
             bc_type='dirichlet',
@@ -221,7 +221,7 @@ class TestEigenfunctions:
 
     def test_dirichlet_zero_on_x_max_face(self, unit_box):
         """Dirichlet eigenfunctions vanish on x=1."""
-        p = TensorProductProvider(
+        p = BoxLaplacianSpectrumProvider(
             unit_box,
             truncation=(2, 2, 2),
             bc_type='dirichlet',
@@ -237,7 +237,7 @@ class TestEigenfunctions:
 
     def test_neumann_constant_mode_uniform(self, unit_box):
         """Neumann (0,0,0) mode is constant 1 on unit box."""
-        p = TensorProductProvider(
+        p = BoxLaplacianSpectrumProvider(
             unit_box,
             truncation=(2, 2, 2),
             bc_type='neumann',
@@ -304,7 +304,7 @@ class TestNormalizationOrthogonality:
         npt.assert_almost_equal(ip, 0.0, decimal=3)
 
     def test_all_dirichlet_norms_close_to_1(self, unit_box):
-        p = TensorProductProvider(
+        p = BoxLaplacianSpectrumProvider(
             unit_box,
             truncation=(2, 2, 2),
             bc_type='dirichlet',

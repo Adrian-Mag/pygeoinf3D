@@ -23,7 +23,7 @@ from .providers.base import (
     FunctionToKernelAdapter,
     KernelProvider3D,
 )
-from .providers.tensor_product import TensorProductProvider
+from .providers.tensor_product import BoxLaplacianSpectrumProvider, TensorProductProvider
 from .operators.base import SpectralOperator3D
 from .operators.spectral_power_base import SpectralPowerBase3D
 from .operators.laplacian_box import BoxLaplacian
@@ -71,7 +71,8 @@ __all__ = [
     "FunctionProvider3D",
     "KernelProvider3D",
     "FunctionToKernelAdapter",
-    "TensorProductProvider",
+    "BoxLaplacianSpectrumProvider",
+    "TensorProductProvider",  # backward-compat alias
     "SpectralOperator3D",
     "SpectralPowerBase3D",
     "BoxLaplacian",

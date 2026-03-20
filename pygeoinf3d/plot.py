@@ -802,6 +802,8 @@ def compare_function3d_axis_sliders(
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
     plot_n_modes: Optional[int] = None,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
 ) -> "go.Figure":
     """Create a synced multi-panel Plotly slider.
 
@@ -1002,8 +1004,8 @@ def compare_function3d_axis_sliders(
 
     fig.update_layout(
         sliders=[slider],
-        width=min(460 * n_panels + 120, 1600),
-        height=520,
+        width=width if width is not None else min(460 * n_panels + 120, 1600),
+        height=height if height is not None else 520,
         margin=dict(l=70, r=90, t=70, b=100),
     )
 

@@ -19,7 +19,7 @@ import numpy as np
 import numpy.testing as npt
 
 from pygeoinf3d.geometries.box.domain import BoxDomain
-from pygeoinf3d.providers.tensor_product import TensorProductProvider
+from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
 from pygeoinf3d.operators.laplacian_box import BoxLaplacian
 from pygeoinf3d.operators.inverse_laplacian_box import InverseBoxLaplacian
@@ -44,14 +44,14 @@ def space(unit_box):
 
 @pytest.fixture
 def dirichlet_provider(unit_box):
-    return TensorProductProvider(
+    return BoxLaplacianSpectrumProvider(
         unit_box, truncation=(3, 3, 3), bc_type='dirichlet'
     )
 
 
 @pytest.fixture
 def neumann_provider(unit_box):
-    return TensorProductProvider(
+    return BoxLaplacianSpectrumProvider(
         unit_box, truncation=(3, 3, 3), bc_type='neumann'
     )
 
@@ -110,7 +110,7 @@ class TestConstructorValidation:
     def test_raises_domain_mismatch(self, unit_box, space, dirichlet_provider):
         """Provider box differs from space domain → ValueError."""
         other_box = BoxDomain(np.zeros(3), 2.0 * np.ones(3))
-        other_provider = TensorProductProvider(
+        other_provider = BoxLaplacianSpectrumProvider(
             other_box, truncation=(3, 3, 3), bc_type='dirichlet'
         )
         with pytest.raises(ValueError):
@@ -286,7 +286,7 @@ class TestNegativePowerZeroModeSuppression:
         """A custom eigenvalue_tol can suppress a nominally small eigenvalue."""
         # Use a Dirichlet box where all eigenvalues are >= 3*pi^2 ~ 29.6.
         # Setting tol=100 suppresses all modes (all lambda_k < 100 at truncation=1).
-        provider = TensorProductProvider(
+        provider = BoxLaplacianSpectrumProvider(
             unit_box, truncation=(1, 1, 1), bc_type='dirichlet'
         )
         op = GeneralizedBoxLaplacian(

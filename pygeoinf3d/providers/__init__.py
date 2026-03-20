@@ -8,7 +8,7 @@ Public API
     Abstract base for indexed kernel providers.
 :class:`~pygeoinf3d.providers.base.FunctionToKernelAdapter`
     Adapter wrapping a Function3D provider into a KernelProvider3D.
-:class:`~pygeoinf3d.providers.tensor_product.TensorProductProvider`
+:class:`~pygeoinf3d.providers.tensor_product.BoxLaplacianSpectrumProvider`
     Spectral eigenbasis provider for box domains.
 :mod:`~pygeoinf3d.providers.function_providers`
     Sub-package for user-facing volumetric kernel function providers.
@@ -19,13 +19,13 @@ from pygeoinf3d.providers.base import (
     FunctionToKernelAdapter,
     KernelProvider3D,
 )
-from pygeoinf3d.providers.tensor_product import TensorProductProvider
+from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
 from . import function_providers
 
 __all__ = [
     "FunctionProvider3D",
     "KernelProvider3D",
     "FunctionToKernelAdapter",
-    "TensorProductProvider",
+    "BoxLaplacianSpectrumProvider",
     "function_providers",
 ]

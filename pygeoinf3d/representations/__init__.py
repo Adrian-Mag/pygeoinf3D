@@ -16,7 +16,7 @@ Architecture (see active-plans/pygeoinf3d-lebesgue-coefficient-architecture-plan
 Phase roadmap:
     Phase 1 (complete): Representation boundary and API contracts.
     Phase 2 (current): Gram-aware backends + induced coefficient metric.
-    Phase 3: TensorProductProvider integration.
+    Phase 3: BoxLaplacianSpectrumProvider integration.
     Phase 4: BoxLaplacian refactor to consume shared representations.
 """
 

@@ -17,7 +17,7 @@ and *K* = ``n_modes``.
 Typical usage (prior for a 3D PLI notebook)::
 
     from pygeoinf3d.geometries.box.domain import BoxDomain
-    from pygeoinf3d.providers.tensor_product import TensorProductProvider
+    from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
     from pygeoinf3d.spaces.lebesgue import Lebesgue3D
     from pygeoinf3d.operators.inverse_laplacian_box import InverseBoxLaplacian
     from pygeoinf3d.sampling import KLSampler3D
@@ -26,7 +26,7 @@ Typical usage (prior for a 3D PLI notebook)::
 
     box      = BoxDomain(np.zeros(3), np.ones(3))
     space    = Lebesgue3D(box)
-    provider = TensorProductProvider(box, truncation=(5, 5, 5), bc_type='dirichlet')
+    provider = BoxLaplacianSpectrumProvider(box, truncation=(5, 5, 5), bc_type='dirichlet')
     inv_lap  = InverseBoxLaplacian(space, provider)
 
     kl = KLSampler3D(inv_lap, n_modes=20)
@@ -204,7 +204,7 @@ class KLSampler3D:
         )
 
         # Detect tensor-product structure for fast-path evaluators
-        from pygeoinf3d.providers.tensor_product import TensorProductProvider as _TPA
+        from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider as _TPA
         _tp = getattr(operator, '_provider', None)
         self._tp_provider = _tp if isinstance(_tp, _TPA) else None
 
@@ -229,7 +229,7 @@ class KLSampler3D:
 
     @property
     def has_tensor_product_structure(self) -> bool:
-        """True if the operator is backed by a :class:`TensorProductProvider`.
+        """True if the operator is backed by a :class:`BoxLaplacianSpectrumProvider`.
 
         When True, the fast vectorized evaluators
         :meth:`evaluate_on_regular_grid` and :meth:`evaluate_on_axis_slice`
@@ -348,7 +348,7 @@ class KLSampler3D:
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Vectorized KL evaluation on a regular 3-D axis-aligned grid.
 
-        Requires the operator to be backed by a :class:`TensorProductProvider`
+        Requires the operator to be backed by a :class:`BoxLaplacianSpectrumProvider`
         (i.e. :attr:`has_tensor_product_structure` is True).  Uses an
         ``einsum``-based tensor-product decomposition that avoids the Python
         loop over grid points used by the generic :class:`Function3D` path.
@@ -386,7 +386,7 @@ class KLSampler3D:
             raise TypeError(
                 "evaluate_on_regular_grid requires tensor-product structure. "
                 "The operator backing this KLSampler3D does not expose a "
-                "TensorProductProvider."
+                "BoxLaplacianSpectrumProvider."
             )
         xis = np.asarray(xis, dtype=float)
         n_eff = self._resolve_plot_n_modes(plot_n_modes)
@@ -468,7 +468,7 @@ class KLSampler3D:
             raise TypeError(
                 "evaluate_on_axis_slice requires tensor-product structure. "
                 "The operator backing this KLSampler3D does not expose a "
-                "TensorProductProvider."
+                "BoxLaplacianSpectrumProvider."
             )
         from pygeoinf3d.providers.tensor_product import _make_1d_phi
 
