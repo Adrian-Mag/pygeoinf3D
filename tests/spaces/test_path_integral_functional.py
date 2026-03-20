@@ -564,3 +564,68 @@ class TestSumLinearForm:
         # Each VolumeKernel3D evaluates f=1 against its kernel
         expected = vk1(f) + vk2(f)
         np.testing.assert_allclose(slm(f), expected, rtol=1e-10, atol=1e-10)
+
+
+# ===========================================================================
+# Caching tests (Phase 1 — vectorize-hot-paths)
+# ===========================================================================
+
+class TestPathIntegralFunctionalCaching:
+
+    def test_path_integral_cached_nodes_same_as_direct(self):
+        """Evaluation matches manually computed integral using arc_length_nodes."""
+        dom, sobolev = _make_domain_and_sobolev()
+        path = _straight_path(0.0, 1.0)
+        ell = PathIntegralFunctional(sobolev, path, n_quad=50)
+        f = _sin_fn(dom)
+
+        # Manual computation using arc_length_nodes directly
+        t_arr, pts = path.arc_length_nodes(50)
+        vals = f(pts)
+        expected = 1.0 * path.arclength * float(np.trapezoid(vals, t_arr))
+
+        result = ell(f)
+        np.testing.assert_allclose(result, expected, rtol=1e-14, atol=1e-14)
+
+    def test_path_integral_caching_does_not_recompute(self):
+        """After init, _pts and _t_arr exist; repeated calls give identical results."""
+        dom, sobolev = _make_domain_and_sobolev()
+        path = _straight_path()
+        ell = PathIntegralFunctional(sobolev, path)
+
+        # Cached arrays must exist after construction (Phase 1 requirement)
+        assert hasattr(ell, "_pts"), "_pts must be cached in __init__"
+        assert hasattr(ell, "_t_arr"), "_t_arr must be cached in __init__"
+
+        # Repeated calls must return identical results
+        f = _sin_fn(dom)
+        r1 = ell(f)
+        r2 = ell(f)
+        assert r1 == r2, "Repeated evaluation must give identical results"
+
+    def test_path_integral_copy_shares_path(self):
+        """copy() returns a functional that gives the same result as the original."""
+        dom, sobolev = _make_domain_and_sobolev()
+        path = _straight_path()
+        ell = PathIntegralFunctional(sobolev, path, n_quad=50)
+        copied = ell.copy()
+        f = _linear_x_fn(dom)
+        np.testing.assert_allclose(copied(f), ell(f), rtol=1e-14, atol=1e-14)
+
+    def test_path_integral_negation_works(self):
+        """(-form)(f) == -form(f)."""
+        dom, sobolev = _make_domain_and_sobolev()
+        path = _straight_path()
+        ell = PathIntegralFunctional(sobolev, path, n_quad=50)
+        neg_ell = -ell
+        f = _sin_fn(dom)
+        np.testing.assert_allclose(neg_ell(f), -ell(f), rtol=1e-14, atol=1e-14)
+
+    def test_path_integral_scalar_mul_works(self):
+        """(2.0 * form)(f) == 2.0 * form(f)."""
+        dom, sobolev = _make_domain_and_sobolev()
+        path = _straight_path()
+        ell = PathIntegralFunctional(sobolev, path, n_quad=50)
+        scaled_ell = 2.0 * ell
+        f = _sin_fn(dom)
+        np.testing.assert_allclose(scaled_ell(f), 2.0 * ell(f), rtol=1e-14, atol=1e-14)

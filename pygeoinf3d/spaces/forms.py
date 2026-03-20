@@ -302,6 +302,9 @@ class PathIntegralFunctional(LinearForm):
         self._n_quad: int = int(n_quad)
         self._space: "Sobolev3D" = space
         self._scale: float = float(_scale)
+        # Cache quadrature nodes at construction time (path is immutable).
+        self._t_arr, self._pts = path.arc_length_nodes(int(n_quad))
+        self._eval_scale: float = float(_scale) * path.arclength
         # Bypass component enumeration.
         super().__init__(space, components=np.zeros(0))
 
@@ -330,10 +333,9 @@ class PathIntegralFunctional(LinearForm):
     # ------------------------------------------------------------------
 
     def _mapping_impl(self, g: "Function3D") -> float:
-        """Evaluate ``ℓ_γ(g)`` via composite trapezoidal rule."""
-        t_arr, pts = self._path.arc_length_nodes(self._n_quad)
-        vals = g(pts)  # batch call: shape (n_quad,)
-        return self._scale * self._path.arclength * float(np.trapezoid(vals, t_arr))
+        """Evaluate ``ℓ_γ(g)`` via composite trapezoidal rule (cached nodes)."""
+        vals = g(self._pts)  # batch call: shape (n_quad,)
+        return self._eval_scale * float(np.trapezoid(vals, self._t_arr))
 
     # ------------------------------------------------------------------
     # Properties
