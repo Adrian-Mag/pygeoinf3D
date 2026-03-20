@@ -345,20 +345,76 @@ class Sobolev3D(HilbertSpace):
                 )
             inv_w = self._inverse_weight
             n = inv_w.n_modes
-            # Evaluate ℓ on each eigenfunction — captured eagerly to avoid
-            # late-binding bugs in the closure below.
-            coeffs = [float(fp(inv_w.get_eigenfunction(k))) for k in range(n)]
-            nus = [float(inv_w.get_eigenvalue(k)) for k in range(n)]
-            phis = [inv_w.get_eigenfunction(k) for k in range(n)]
 
-            def evaluate(x, _c=coeffs, _nu=nus, _phi=phis):
-                x = np.asarray(x, dtype=float)
-                is_single = x.ndim == 1
-                pts = x[None, :] if is_single else x
-                total = np.zeros(len(pts))
-                for ck, nuk, phik in zip(_c, _nu, _phi):
-                    total = total + ck * nuk * np.asarray(phik(pts), dtype=float)
-                return float(total[0]) if is_single else total
+            # Check whether a BoxLaplacianSpectrumProvider fast path is available.
+            from pygeoinf3d.providers.tensor_product import (
+                BoxLaplacianSpectrumProvider as _BLSP,
+            )
+            provider = getattr(inv_w, "_provider", None)
+            has_fast_path = isinstance(provider, _BLSP)
+
+            from pygeoinf3d.spaces.forms import PathIntegralFunctional as _PIF
+
+            if has_fast_path and isinstance(fp, _PIF):
+                # ── ULTRA-FAST PATH: vectorize BOTH analysis and synthesis ──
+                # Analysis: evaluate ℓ on ALL eigenfunctions at once using the
+                # cached quadrature nodes stored in the PathIntegralFunctional.
+                #   Phi_quad[k, q] = φ_k(p_q)   shape (N, n_quad)
+                #   c_k = scale · ∫ φ_k(p(t)) dt  ≈ scale · trapz(Phi_quad[k,:], t)
+                Phi_quad = provider.evaluate_all_eigenfunctions(fp._pts)
+                coeffs = fp._eval_scale * np.trapezoid(Phi_quad, fp._t_arr, axis=1)
+                # Eigenvalues of the inverse-weight operator (not Laplacian eigs)
+                nus = np.array([float(inv_w.get_eigenvalue(k)) for k in range(n)])
+                alpha = coeffs * nus  # shape (n,)
+
+                _alpha = alpha
+                _prov = provider
+
+                def evaluate(x, _a=_alpha, _p=_prov):
+                    x = np.asarray(x, dtype=float)
+                    is_single = x.ndim == 1
+                    pts = x[None, :] if is_single else x
+                    Phi = _p.evaluate_all_eigenfunctions(pts)  # (n, n_pts)
+                    result = _a @ Phi  # (n_pts,)
+                    return float(result[0]) if is_single else result
+
+            elif has_fast_path:
+                # ── FAST SYNTHESIS PATH: loop analysis, vectorized synthesis ──
+                # Analysis: loop is unavoidable for a generic LinearForm
+                # (we cannot assume anything about its quadrature structure).
+                coeffs = np.array(
+                    [float(fp(inv_w.get_eigenfunction(k))) for k in range(n)]
+                )
+                nus = np.array([float(inv_w.get_eigenvalue(k)) for k in range(n)])
+                alpha = coeffs * nus  # shape (n,)
+
+                _alpha = alpha
+                _prov = provider
+
+                def evaluate(x, _a=_alpha, _p=_prov):
+                    x = np.asarray(x, dtype=float)
+                    is_single = x.ndim == 1
+                    pts = x[None, :] if is_single else x
+                    Phi = _p.evaluate_all_eigenfunctions(pts)  # (n, n_pts)
+                    result = _a @ Phi  # (n_pts,)
+                    return float(result[0]) if is_single else result
+
+            else:
+                # ── FALLBACK: original loop over eigenfunctions ──────────────
+                # Used when inverse_weight has no BoxLaplacianSpectrumProvider
+                # (e.g. a custom SpectralOperator3D).
+                coeffs = [float(fp(inv_w.get_eigenfunction(k))) for k in range(n)]
+                nus = [float(inv_w.get_eigenvalue(k)) for k in range(n)]
+                phis = [inv_w.get_eigenfunction(k) for k in range(n)]
+
+                def evaluate(x, _c=coeffs, _nu=nus, _phi=phis):
+                    x = np.asarray(x, dtype=float)
+                    is_single = x.ndim == 1
+                    pts = x[None, :] if is_single else x
+                    total = np.zeros(len(pts))
+                    for ck, nuk, phik in zip(_c, _nu, _phi):
+                        total = total + ck * nuk * np.asarray(phik(pts), dtype=float)
+                    return float(total[0]) if is_single else total
 
             return Function3D(
                 self._base_space.function_domain, evaluate_callable=evaluate
