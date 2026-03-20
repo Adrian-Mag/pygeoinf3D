@@ -251,18 +251,21 @@ class KLSampler3D:
         """
         z = self._rng.standard_normal(self._n_modes)
         # weights[k] = sqrt(lam_k) * xi_k
-        weights: List[float] = (self._sqrt_eigenvalues * z).tolist()
+        weights = self._sqrt_eigenvalues * z
 
-        mean_fn = self._mean
-        snapshot = list(zip(weights, self._eigenfunctions))
+        if self.has_tensor_product_structure:
+            evaluate = self._build_vectorized_evaluate(weights)
+        else:
+            mean_fn = self._mean
+            snapshot = list(zip(weights.tolist(), self._eigenfunctions))
 
-        def evaluate(x: np.ndarray) -> Union[float, np.ndarray]:
-            x = np.asarray(x, dtype=float)
-            total = mean_fn(x)
-            for w_k, phi_k in snapshot:
-                if w_k != 0.0:
-                    total = total + w_k * phi_k(x)
-            return total
+            def evaluate(x: np.ndarray) -> Union[float, np.ndarray]:  # type: ignore[misc]
+                x = np.asarray(x, dtype=float)
+                total = mean_fn(x)
+                for w_k, phi_k in snapshot:
+                    if w_k != 0.0:
+                        total = total + w_k * phi_k(x)
+                return total
 
         fn = Function3D(
             self._space.function_domain,
@@ -318,22 +321,99 @@ class KLSampler3D:
             raise ValueError(
                 f"xis must have shape ({self._n_modes},); got {xis.shape}."
             )
-        weights: List[float] = (self._sqrt_eigenvalues * xis).tolist()
-        mean_fn = self._mean
-        snapshot = list(zip(weights, self._eigenfunctions))
+        weights = self._sqrt_eigenvalues * xis
 
-        def evaluate(x: np.ndarray) -> Union[float, np.ndarray]:
-            x = np.asarray(x, dtype=float)
-            total = mean_fn(x)
-            for w_k, phi_k in snapshot:
-                if w_k != 0.0:
-                    total = total + w_k * phi_k(x)
-            return total
+        if self.has_tensor_product_structure:
+            evaluate = self._build_vectorized_evaluate(weights)
+        else:
+            mean_fn = self._mean
+            snapshot = list(zip(weights.tolist(), self._eigenfunctions))
+
+            def evaluate(x: np.ndarray) -> Union[float, np.ndarray]:  # type: ignore[misc]
+                x = np.asarray(x, dtype=float)
+                total = mean_fn(x)
+                for w_k, phi_k in snapshot:
+                    if w_k != 0.0:
+                        total = total + w_k * phi_k(x)
+                return total
 
         fn = Function3D(self._space.function_domain, evaluate_callable=evaluate)
         if self.has_tensor_product_structure:
             _attach_kl_fast_paths(self, xis, fn)
         return fn
+
+    # ------------------------------------------------------------------
+    # Vectorized evaluate builder
+    # ------------------------------------------------------------------
+
+    def _build_vectorized_evaluate(self, weights: np.ndarray):
+        """Build a fully-vectorized evaluate closure for the tensor-product case.
+
+        Instead of iterating over modes in Python, this closure:
+
+        1. Evaluates all required 1-D basis matrices in one vectorized call per
+           axis (via :func:`~pygeoinf3d.providers.tensor_product._eval_1d_basis`).
+        2. Uses ``np.einsum`` to compute the weighted mode sum without any
+           Python loop, giving a :math:`O(K \\cdot N)` operation where *K* is
+           the number of modes and *N* is the number of evaluation points.
+
+        The expansion evaluated is
+
+        .. math::
+
+            u(\\mathbf{x}) = m(\\mathbf{x}) +
+                \\sum_{k=0}^{K-1} w_k\\,\\phi_{k_x}(x)\\,\\phi_{k_y}(y)\\,\\phi_{k_z}(z)
+
+        using the factored form of the tensor-product eigenfunctions.
+
+        Only valid when :attr:`has_tensor_product_structure` is True.
+
+        Parameters
+        ----------
+        weights:
+            Array of shape ``(n_modes,)`` containing
+            :math:`w_k = \\sqrt{\\lambda_k}\\,\\xi_k`.
+
+        Returns
+        -------
+        callable
+            An evaluate function matching the
+            :class:`~pygeoinf3d.core.functions.Function3D` signature.
+        """
+        from pygeoinf3d.providers.tensor_product import _eval_1d_basis
+
+        provider = self._tp_provider
+        n_modes = self._n_modes
+        mean_fn = self._mean
+        _w = weights.copy()  # snapshot
+
+        # Pre-compute 0-based column indices into the 1-D basis matrices
+        # (one-time cost at closure construction, not repeated per eval call)
+        bc = provider.bc_type
+        kmin = 0 if bc == "neumann" else 1
+        ax, ay, az = provider._low
+        Lx, Ly, Lz = provider._lengths
+        nx, ny, nz = provider._truncation
+
+        multi_indices = [provider.get_multi_index(k) for k in range(n_modes)]
+        ix = np.array([kx - kmin for kx, _, __ in multi_indices])
+        iy = np.array([ky - kmin for _, ky, __ in multi_indices])
+        iz = np.array([kz - kmin for _, __, kz in multi_indices])
+
+        def evaluate(x: np.ndarray) -> Union[float, np.ndarray]:
+            x = np.asarray(x, dtype=float)
+            is_single = x.ndim == 1
+            pts = x[None, :] if is_single else x
+            # 1-D basis matrices: shape (n_pts, n_axis_modes)
+            Bx = _eval_1d_basis(pts[:, 0], ax, Lx, nx, bc)
+            By = _eval_1d_basis(pts[:, 1], ay, Ly, ny, bc)
+            Bz = _eval_1d_basis(pts[:, 2], az, Lz, nz, bc)
+            # result[p] = sum_k w[k] * Bx[p,ix[k]] * By[p,iy[k]] * Bz[p,iz[k]]
+            result = np.einsum("k,pk,pk,pk->p", _w, Bx[:, ix], By[:, iy], Bz[:, iz])
+            result += mean_fn(pts)
+            return float(result[0]) if is_single else result
+
+        return evaluate
 
     # ------------------------------------------------------------------
     # Fast tensor-product evaluators
