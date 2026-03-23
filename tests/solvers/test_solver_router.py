@@ -1,11 +1,11 @@
-"""Tests for pygeoinf3d.solvers.router.SolverRouter (Phase 2).
+"""Tests for pygeoinf3d.solvers.router.SolverRouter (Phase 2 + Phase 4).
 
 Verifies:
 - recommend() returns a SolverRecommendation object
 - SpectralGramSolver recommended for Sobolev3D + PathIntegralFunctional
 - SOLAOperator3D recommended for Lebesgue3D + VolumeKernel3D
-- SOLAOperator3D recommended for Sobolev3D + VolumeKernel3D (with warning)
-- Warning present when Sobolev3D used with non-PathIntegralFunctional forms
+- SpectralGramSolver recommended for Sobolev3D + VolumeKernel3D (Phase 4)
+- No warning when SpectralGramSolver chosen for Sobolev3D + VolumeKernel3D (Phase 4)
 - recommend_sampler() recommends KLSampler3D for SpectralOperator3D
 - recommend_sampler() returns no recommendation for non-SpectralOperator3D
 - No recommendation for unknown form types
@@ -162,23 +162,23 @@ def test_sola_recommended_for_lebesgue_volume_kernels(
     assert result.solver_spec.solver_class is SOLAOperator3D
 
 
-def test_sola_recommended_for_sobolev_volume_kernels(
+def test_spectral_gram_recommended_for_sobolev_volume_kernels(
     router, sobolev_space, volume_kernels_sobolev
 ):
+    """Phase 4: SpectralGramSolver is now preferred for Sobolev3D + VolumeKernel3D."""
     result = router.recommend(sobolev_space, volume_kernels_sobolev)
     assert result.solver_spec is not None
-    assert result.solver_spec.solver_class is SOLAOperator3D
+    assert result.solver_spec.solver_class is SpectralGramSolver
 
 
-def test_sola_warning_when_spectral_but_volume_kernels(
+def test_no_warning_when_spectral_solver_chosen_for_volume_kernels(
     router, sobolev_space, volume_kernels_sobolev
 ):
-    """Warning is present when Sobolev3D used with VolumeKernel3D (not PathIntegral)."""
+    """Phase 4: SpectralGramSolver is now recommended directly — no warning needed."""
     result = router.recommend(sobolev_space, volume_kernels_sobolev)
-    assert len(result.warnings) > 0
-    # Should mention the faster alternative
-    combined = " ".join(result.warnings)
-    assert "SpectralGramSolver" in combined or "faster" in combined.lower()
+    # SpectralGramSolver is the fast path, so no performance warnings expected
+    assert result.solver_spec.solver_class is SpectralGramSolver
+    assert len(result.warnings) == 0
 
 
 def test_sola_recommendation_has_solver_spec(

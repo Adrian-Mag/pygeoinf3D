@@ -107,15 +107,34 @@ class SolverRouter:
                     hasattr(provider, "has_tensor_product_structure")
                     and provider.has_tensor_product_structure
                 ):
-                    if forms and all(isinstance(f, PathIntegralFunctional) for f in forms):
-                        n_quads = {f.n_quad for f in forms}
-                        if len(n_quads) == 1:
+                    _spectral_form_types = (PathIntegralFunctional, VolumeKernel3D)
+                    if forms and all(isinstance(f, _spectral_form_types) for f in forms):
+                        # For path-only stacks, additionally require uniform n_quad
+                        path_forms = [f for f in forms if isinstance(f, PathIntegralFunctional)]
+                        if path_forms:
+                            n_quads = {f.n_quad for f in path_forms}
+                            if len(n_quads) > 1:
+                                # Mixed n_quad — fall through to SOLAOperator3D
+                                pass
+                            else:
+                                spec = SOLVER_REGISTRY.find_by_name("SpectralGramSolver")
+                                return SolverRecommendation(
+                                    solver_spec=spec,
+                                    reason=(
+                                        "Sobolev3D with spectral weight and "
+                                        "PathIntegralFunctional/VolumeKernel3D forms "
+                                        "— fast spectral Gram path applies"
+                                    ),
+                                    warnings=[],
+                                )
+                        else:
+                            # All volume forms
                             spec = SOLVER_REGISTRY.find_by_name("SpectralGramSolver")
                             return SolverRecommendation(
                                 solver_spec=spec,
                                 reason=(
                                     "Sobolev3D with spectral weight and all "
-                                    "PathIntegralFunctional — fast spectral Gram "
+                                    "VolumeKernel3D forms — fast spectral Gram "
                                     "path applies"
                                 ),
                                 warnings=[],

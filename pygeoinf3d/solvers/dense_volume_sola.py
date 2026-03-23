@@ -230,3 +230,90 @@ class DenseVolumeSolaSolver:
     def backend(self) -> VolumeInteractionBackend:
         """The underlying :class:`VolumeInteractionBackend` instance."""
         return self._backend
+
+    def forward_operator(self, function_space):
+        r"""Return the forward map as a :class:`~pygeoinf.LinearOperator`.
+
+        Wraps :meth:`forward` as a :class:`~pygeoinf.LinearOperator` with
+        domain *function_space* and codomain :class:`~pygeoinf.EuclideanSpace`
+        ``(n_kernels)``.  The precomputed :math:`K` matrix is reused on every
+        call — no quadrature is repeated.
+
+        The exact adjoint in the :math:`L^2(\Omega)` sense is:
+
+        .. math::
+
+            A^*(d)(x) = \sum_{i=0}^{m-1} d_i\,k_i(x)
+
+        where :math:`k_i` are the kernel functions from the provider.
+        Because the forward map evaluates :math:`f` at the same quadrature
+        nodes used to build :math:`K`, the composition
+        :math:`A A^*` recovers the Gram matrix exactly.
+
+        Parameters
+        ----------
+        function_space:
+            A :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` (or compatible
+            Hilbert space) that is the domain of the operator.
+
+        Returns
+        -------
+        pygeoinf.LinearOperator
+            Linear map from *function_space* to
+            :class:`~pygeoinf.EuclideanSpace` ``(n_kernels)``.
+
+        Notes
+        -----
+        Each call constructs a new :class:`~pygeoinf.LinearOperator` object,
+        but all returned operators share the same cached :math:`K` matrix
+        via :attr:`backend`.
+        """
+        from pygeoinf import EuclideanSpace
+        from pygeoinf.linear_operators import LinearOperator
+        from pygeoinf3d.spaces.forms import VolumeKernel3D
+        from pygeoinf3d.core.functions import Function3D
+
+        m = self.n_kernels
+        codomain = EuclideanSpace(m)
+        provider = self._backend._provider
+
+        def mapping(f):
+            return codomain.from_components(self.forward(f))
+
+        def adjoint_mapping(d):
+            # A*(d)(x) = ∑_i d_i k_i(x)  — exact L² adjoint
+            c = codomain.to_components(d)  # shape (m,)
+
+            def evaluate(x):
+                x = np.asarray(x, dtype=float)
+                single = x.ndim == 1
+                if single:
+                    x = x[np.newaxis, :]
+                # K_x[i, j] = k_i(x_j), shape (m, n_pts_in)
+                K_x = provider.evaluate_all(x)
+                result = c @ K_x  # (n_pts_in,)
+                return float(result[0]) if single else result
+
+            return Function3D(
+                function_space.function_domain, evaluate_callable=evaluate
+            )
+
+        def dual_mapping(yp):
+            # yp ∈ EuclideanSpace(m).dual — returns a LinearForm on function_space
+            c = codomain.dual.to_components(yp)  # shape (m,)
+            forms = [
+                VolumeKernel3D(function_space, provider.get_function(i))
+                for i in range(m)
+            ]
+            result = float(c[0]) * forms[0]
+            for i in range(1, m):
+                result = result + float(c[i]) * forms[i]
+            return result
+
+        return LinearOperator(
+            function_space,
+            codomain,
+            mapping,
+            dual_mapping=dual_mapping,
+            adjoint_mapping=adjoint_mapping,
+        )

@@ -4,7 +4,7 @@
 >
 > **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5).
 >
-> **Last updated:** 2026-03-23 (sola-structured-fast-path Phase 3 complete). **`sola-structured-fast-path` Phase 2 is complete** (`FunctionProvider3D.evaluate_all` default loop fallback added to `providers/base.py`; `GaussianProvider3D.evaluate_all` vectorized override added (broadcasting over `(n_kernels, n_pts, 3)` displacements, no Python loop); `VolumeInteractionBackend` created in `solvers/volume_interactions.py` with `interaction_matrix()`, `gram()`, `cross_gram()` methods; lazy `_K_cache`; exported from `solvers/__init__.py`; 4 new tests in `tests/solvers/test_volume_interaction_backend.py`; 876 total tests pass). **`sola-structured-fast-path` Phase 3 is complete** (`DenseVolumeSolaSolver` created in `solvers/dense_volume_sola.py` with `gram()`, `forward(f)`, `resolve(target_K_row)` methods backed by `VolumeInteractionBackend`; `scipy.linalg.cho_factor` precomputed for O(m²) repeated resolve calls; `SOLVER_REGISTRY` updated to 4 entries; `SolverRouter.recommend` extended with optional `provider` kwarg — recommends `DenseVolumeSolaSolver` when `provider` is a `FunctionProvider3D` + space is `Lebesgue3D` on `BoxDomain` + all forms are `VolumeKernel3D`; 12 new tests in `tests/solvers/test_dense_volume_sola.py`; `test_solver_registry.py` and `test_solver_router.py` count tests updated to 4; 890 total tests pass).
+> **Last updated:** 2026-03-23 (sola-structured-fast-path Phase 5 complete). **`sola-structured-fast-path` Phase 5 is complete** (`DenseVolumeSolaSolver.forward_operator(function_space)` added: wraps the precomputed K matrix as a `pygeoinf.LinearOperator` with domain = supplied `Lebesgue3D`, codomain = `EuclideanSpace(n_kernels)`; exact L² adjoint `A*(d)(x) = ∑_i d_i k_i(x)` implemented via `provider.evaluate_all`; dual mapping returns a `VolumeKernel3D` sum; enables `GaussianMeasure.affine_mapping(operator=A_fwd)` — if prior covariance is C, data covariance = A_fwd C A_fwd*; composition A A* = Gram G exact to machine precision; pygeoinf NOT modified; 10 new integration tests in `tests/solvers/test_dense_volume_sola_integration.py`; 905 total tests pass). **`sola-structured-fast-path` Phase 2 is complete** (`FunctionProvider3D.evaluate_all` default loop fallback added to `providers/base.py`; `GaussianProvider3D.evaluate_all` vectorized override added (broadcasting over `(n_kernels, n_pts, 3)` displacements, no Python loop); `VolumeInteractionBackend` created in `solvers/volume_interactions.py` with `interaction_matrix()`, `gram()`, `cross_gram()` methods; lazy `_K_cache`; exported from `solvers/__init__.py`; 4 new tests in `tests/solvers/test_volume_interaction_backend.py`; 876 total tests pass). **`sola-structured-fast-path` Phase 3 is complete** (`DenseVolumeSolaSolver` created in `solvers/dense_volume_sola.py` with `gram()`, `forward(f)`, `resolve(target_K_row)` methods backed by `VolumeInteractionBackend`; `scipy.linalg.cho_factor` precomputed for O(m²) repeated resolve calls; `SOLVER_REGISTRY` updated to 4 entries; `SolverRouter.recommend` extended with optional `provider` kwarg — recommends `DenseVolumeSolaSolver` when `provider` is a `FunctionProvider3D` + space is `Lebesgue3D` on `BoxDomain` + all forms are `VolumeKernel3D`; 12 new tests in `tests/solvers/test_dense_volume_sola.py`; `test_solver_registry.py` and `test_solver_router.py` count tests updated to 4; 890 total tests pass). **`sola-structured-fast-path` Phase 4 is complete** (`SpectralGramSolver` extended to accept `VolumeKernel3D` forms and mixed `PathIntegralFunctional + VolumeKernel3D` stacks on `Sobolev3D`: new `_build_L_volume(volume_forms, provider, domain, resolution)` static method assembles $L_{i,k} = \sum_j k_i(\mathbf{x}_j)\,\Phi_k(\mathbf{x}_j)\,w_j$ via `BoxDomain.structured_mesh` + `evaluate_all_eigenfunctions`; constructor accepts a new `resolution` kwarg (default 20); form-type validation now accepts both `PathIntegralFunctional` and `VolumeKernel3D`; `n_quad` consistency check restricted to path-only forms; L matrix rows assembled by type and stitched back in original form order; `SolverRouter` updated to recommend `SpectralGramSolver` for Sobolev3D + all-volume or mixed stacks; 2 existing router tests updated to expect `SpectralGramSolver` instead of `SOLAOperator3D`; 5 new tests in `tests/solvers/test_spectral_gram_volume.py`; 895 total tests pass).
 
 ---
 
@@ -201,10 +201,13 @@ pygeoinf3D/
 │   │   │                      #   recommend(space, forms, *, provider=None): DenseVolumeSolaSolver (new) > SpectralGramSolver > SOLAOperator3D > None
 │   │   │                      #   provider kwarg: when FunctionProvider3D + Lebesgue3D + BoxDomain + all VolumeKernel3D → DenseVolumeSolaSolver
 │   │   │                      #   recommend_sampler(op): KLSampler3D if SpectralOperator3D
-│   │   ├── dense_volume_sola.py  # DenseVolumeSolaSolver — fast repeated SOLA on BoxDomain+Gaussian ← sola-structured-fast-path Phase 3
+│   │   ├── dense_volume_sola.py  # DenseVolumeSolaSolver — fast repeated SOLA on BoxDomain+Gaussian ← sola-structured-fast-path Phases 3+5
 │   │   │                      #   __init__(domain, provider, resolution=20, location='cell_centers', regularization=0.0)
 │   │   │                      #   gram() → (n_kernels, n_kernels) ndarray; forward(f) → (n_kernels,); resolve(target_K_row) → (n_kernels,)
 │   │   │                      #   Cholesky-cached for O(m²) repeated resolve calls
+│   │   │                      #   forward_operator(function_space) → pygeoinf.LinearOperator (Phase 5)
+│   │   │                      #     domain=function_space, codomain=EuclideanSpace(n_kernels)
+│   │   │                      #     A*(d)(x)=∑_i d_i k_i(x) via provider.evaluate_all; A@A*=Gram exact; enables GaussianMeasure.affine_mapping
 │   │   └── volume_interactions.py  # VolumeInteractionBackend — kernel matrix assembly + caching  ← sola-structured-fast-path Phase 2
 │   │                          #   interaction_matrix() (n_kernels, n_pts), gram(), cross_gram(other)
 │   └── representations/       # Lebesgue coefficient architecture Phases 1-2
@@ -251,7 +254,10 @@ pygeoinf3D/
 │   │   ├── __init__.py
 │   │   ├── test_solver_registry.py   ← solver-compatibility-framework Phase 1 (15 tests)
 │   │   ├── test_spectral_gram.py     ← solver-compatibility-framework Phase 1 (multiple tests)
-│   │   └── test_solver_router.py     ← solver-compatibility-framework Phase 2 (12 tests)
+│   │   ├── test_solver_router.py     ← solver-compatibility-framework Phase 2 (12 tests)
+│   │   ├── test_dense_volume_sola.py ← sola-structured-fast-path Phase 3 (12 tests)
+│   │   ├── test_spectral_gram_volume.py ← sola-structured-fast-path Phase 4 (5 tests)
+│   │   └── test_dense_volume_sola_integration.py ← sola-structured-fast-path Phase 5 (10 integration tests)
 │   ├── representations/              # Lebesgue coefficient architecture Phases 1-2
 │   │   ├── __init__.py
 │   │   ├── test_lebesgue_representation.py  ← architecture Phase 1
@@ -2050,4 +2056,102 @@ subclasses override for speed. `GaussianProvider3D` overrides with a vectorized 
 d = points[np.newaxis, :, :] - centers[:, np.newaxis, :]   # (n, n_pts, 3)
 exponent = -0.5 * sum(d**2 / sigmas[:, np.newaxis, :]**2, axis=2)  # (n, n_pts)
 result = A[:, None] * exp(exponent)                          # (n, n_pts)
+```
+
+---
+
+## DenseVolumeSolaSolver Fast-Path Architecture
+
+End-to-end pipeline from `BoxDomain` + `FunctionProvider3D` to a pygeoinf-compatible
+`LinearOperator` with `GaussianMeasure.affine_mapping` support.
+
+### Architecture Layers
+
+```
+BoxDomain + FunctionProvider3D
+        │
+        ▼
+VolumeInteractionBackend          (Phase 2)
+  _pts: (n_pts, 3)
+  _weights: (n_pts,)
+  _K_cache: lazy(m, n_pts)        ← one BLAS call, reused forever
+  gram(), cross_gram()
+        │
+        ▼
+DenseVolumeSolaSolver             (Phase 3 + Phase 5)
+  gram()           → G = K diag(w) K.T           O(m² n_pts) once
+  forward(f)       → K @ (w * f(pts))            O(m n_pts) per call
+  resolve(row)     → cho_solve(G, cross)          O(m²) per call
+  forward_operator(space)  → pygeoinf.LinearOperator  (Phase 5)
+        │
+        ▼
+pygeoinf.LinearOperator           (Phase 5)
+  domain  = function_space (Lebesgue3D)
+  codomain = EuclideanSpace(m)
+  A(f)    = forward(f)            reuses K cache
+  A*(d)(x) = Σ_i d_i k_i(x)      via provider.evaluate_all
+  A @ A* = Gram G (machine precision)
+        │
+        ▼
+GaussianMeasure.affine_mapping(operator=A)   (pygeoinf built-in)
+  prior x ~ N(μ, C) on Lebesgue3D
+  data  y ~ N(Aμ, A C A*)  on EuclideanSpace(m)
+```
+
+### Key Design Decisions (Phase 5)
+
+**Why not `LinearOperator.from_matrix`?**
+`from_matrix` requires a finite-dimensional domain with `domain.to_components`.
+`Lebesgue3D` is infinite-dimensional (no attached representation by default), so
+`to_components` raises `NotImplementedError`. The direct `LinearOperator.__init__`
+with explicit mapping/adjoint/dual callables is the correct approach.
+
+**Exact adjoint formula:**
+For the forward map `A(f)_i = ∫ k_i f dV ≈ K_i · (w ⊙ f(pts))`, the exact L² adjoint is
+`A*(d)(x) = Σ_i d_i k_i(x)`. This means `(A A*)_{ij} = ∫ k_i k_j dV = G[i,j]`, so
+`A @ A* = G` exactly (no quadrature approximation error beyond what K already contains).
+
+**Interaction with `affine_mapping`:**
+`GaussianMeasure.affine_mapping(operator=A)` computes `new_cov = A @ C @ A*`.
+For prior covariance `C = A_sola* @ A_sola` (where `A_sola` is any SOLA operator with the
+same kernels), the data covariance evaluates to `G²` (Gram squared). All intermediate
+operators are composed lazily — no dense matrices are formed unless explicitly requested
+via `.matrix(dense=True)`.
+
+**pygeoinf unchanged:**
+Phase 5 added zero lines to pygeoinf. The existing `LinearOperator.__init__` callable
+constructor and `GaussianMeasure.affine_mapping` are sufficient.
+
+### Usage Example
+
+```python
+import numpy as np
+from pygeoinf import GaussianMeasure
+from pygeoinf3d import BoxDomain, Lebesgue3D
+from pygeoinf3d.providers.function_providers import GaussianProvider3D
+from pygeoinf3d.solvers import DenseVolumeSolaSolver
+from pygeoinf3d.operators.sola import SOLAOperator3D
+from pygeoinf import EuclideanSpace
+from pygeoinf3d.spaces.forms import VolumeKernel3D
+
+box = BoxDomain(np.zeros(3), np.ones(3))
+space = Lebesgue3D(box)
+centers = np.array([[0.2, 0.2, 0.2], [0.5, 0.5, 0.5], [0.8, 0.8, 0.8]])
+provider = GaussianProvider3D(box, centers, sigmas=0.2)
+
+# Fast solver — precomputes K, G, and Cholesky once
+solver = DenseVolumeSolaSolver(box, provider, resolution=20)
+
+# Get a pygeoinf-compatible forward operator
+A = solver.forward_operator(space)   # LinearOperator: Lebesgue3D → R^3
+
+# Build a Gaussian prior on the function space
+forms = [VolumeKernel3D(space, provider.get_function(i)) for i in range(provider.dim)]
+A_sola = SOLAOperator3D(space, EuclideanSpace(provider.dim), forms)
+covariance = A_sola.adjoint @ A_sola   # SPD: Lebesgue3D → Lebesgue3D
+prior = GaussianMeasure(covariance=covariance, expectation=space.zero)
+
+# Push forward through the measurement operator — no extra quadrature
+data_measure = prior.affine_mapping(operator=A)
+# data_measure.covariance ≈ G² (Gram squared), as a lazy LinearOperator on R^3
 ```
