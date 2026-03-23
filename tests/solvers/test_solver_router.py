@@ -234,6 +234,6 @@ def test_recommend_sampler_for_non_spectral_returns_none(router):
 # ---------------------------------------------------------------------------
 
 
-def test_list_available_returns_three(router):
+def test_list_available_returns_four(router):
     specs = router.list_available()
-    assert len(specs) == 3
+    assert len(specs) == 4

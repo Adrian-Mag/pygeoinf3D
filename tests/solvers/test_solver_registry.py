@@ -6,7 +6,6 @@ from pygeoinf3d import (
     Sobolev3D,
     SOLVER_REGISTRY,
     SolverSpec,
-    SolverRegistry,
     SpectralGramSolver,
 )
 from pygeoinf3d.operators.base import SpectralOperator3D
@@ -17,8 +16,8 @@ from pygeoinf3d.spaces.forms import PathIntegralFunctional
 # Registry population
 # ---------------------------------------------------------------------------
 
-def test_registry_has_three_entries():
-    assert len(SOLVER_REGISTRY.list_all()) == 3
+def test_registry_has_four_entries():
+    assert len(SOLVER_REGISTRY.list_all()) == 4
 
 
 # ---------------------------------------------------------------------------

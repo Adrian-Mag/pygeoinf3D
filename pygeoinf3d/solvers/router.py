@@ -60,7 +60,7 @@ class SolverRouter:
     # Public API
     # ------------------------------------------------------------------
 
-    def recommend(self, space: Any, forms: list) -> SolverRecommendation:
+    def recommend(self, space: Any, forms: list, *, provider: Any = None) -> SolverRecommendation:
         """Return the best solver for *space* and *forms*.
 
         Parameters
@@ -70,6 +70,14 @@ class SolverRouter:
             :class:`Lebesgue3D`).
         forms:
             List of linear-form objects describing the measurement operator.
+        provider:
+            Optional :class:`~pygeoinf3d.providers.base.FunctionProvider3D`
+            that generated the kernel functions in *forms*.  When provided
+            alongside a :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` space
+            on a :class:`~pygeoinf3d.geometries.box.domain.BoxDomain` with all
+            *forms* being :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D`,
+            triggers the :class:`~pygeoinf3d.solvers.dense_volume_sola.DenseVolumeSolaSolver`
+            fast path.
 
         Returns
         -------
@@ -112,6 +120,31 @@ class SolverRouter:
                                 ),
                                 warnings=[],
                             )
+
+        # ------------------------------------------------------------------
+        # 1b. DenseVolumeSolaSolver fast path (requires explicit provider)
+        # ------------------------------------------------------------------
+        if provider is not None:
+            from pygeoinf3d.providers.base import FunctionProvider3D
+            from pygeoinf3d.geometries.box.domain import BoxDomain
+
+            if (
+                isinstance(space, Lebesgue3D)
+                and isinstance(space.function_domain, BoxDomain)
+                and isinstance(provider, FunctionProvider3D)
+                and forms
+                and all(isinstance(f, VolumeKernel3D) for f in forms)
+            ):
+                spec = SOLVER_REGISTRY.find_by_name("DenseVolumeSolaSolver")
+                return SolverRecommendation(
+                    solver_spec=spec,
+                    reason=(
+                        "Lebesgue3D on BoxDomain with all VolumeKernel3D and a "
+                        "FunctionProvider3D — DenseVolumeSolaSolver pre-computes "
+                        "the Gram matrix once for fast repeated SOLA assembly"
+                    ),
+                    warnings=[],
+                )
 
         # ------------------------------------------------------------------
         # 2. SOLAOperator3D general path

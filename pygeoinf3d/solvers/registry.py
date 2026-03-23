@@ -90,6 +90,7 @@ def _register_defaults(registry: SolverRegistry) -> None:
     All imports are local to avoid circular-import issues at module load time.
     """
     from pygeoinf3d.solvers.spectral_gram import SpectralGramSolver
+    from pygeoinf3d.solvers.dense_volume_sola import DenseVolumeSolaSolver
     from pygeoinf3d.operators.sola import SOLAOperator3D
     from pygeoinf3d.sampling.kl_sampler import KLSampler3D
     from pygeoinf3d.spaces.sobolev import Sobolev3D
@@ -97,6 +98,32 @@ def _register_defaults(registry: SolverRegistry) -> None:
     from pygeoinf3d.operators.base import SpectralOperator3D
     from pygeoinf3d.spaces.forms import PathIntegralFunctional, VolumeKernel3D, SumLinearForm
     from pygeoinf3d.geometries.box.domain import BoxDomain
+
+    registry.register(SolverSpec(
+        name="DenseVolumeSolaSolver",
+        solver_class=DenseVolumeSolaSolver,
+        geometry_types=(BoxDomain,),
+        space_types=(Lebesgue3D,),
+        operator_types=(),
+        functional_types=(VolumeKernel3D,),
+        purpose="inversion",
+        performance_tier="fast",
+        preconditions=[
+            "Domain must be a BoxDomain",
+            "Function space must be Lebesgue3D",
+            "All linear forms must be VolumeKernel3D from a homogeneous provider",
+            "Provider must be a FunctionProvider3D (ideally GaussianProvider3D"
+            " with vectorized evaluate_all)",
+        ],
+        notes=(
+            "DenseVolumeSolaSolver pre-computes the full kernel-evaluation matrix K"
+            " and Gram matrix G = K diag(w) K^T once at construction time, then"
+            " answers all Gram, forward, and resolve queries via BLAS operations."
+            " Use when the same set of volumetric kernels is used repeatedly (e.g."
+            " SOLA resolving-kernel sweeps).  Falls back gracefully to SOLAOperator3D"
+            " if repeated assembly is not needed."
+        ),
+    ))
 
     registry.register(SolverSpec(
         name="SpectralGramSolver",

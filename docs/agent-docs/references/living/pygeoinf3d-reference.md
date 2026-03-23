@@ -4,7 +4,7 @@
 >
 > **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5).
 >
-> **Last updated:** 2026-03-23 (sola-structured-fast-path Phase 2 complete). **`sola-structured-fast-path` Phase 2 is complete** (`FunctionProvider3D.evaluate_all` default loop fallback added to `providers/base.py`; `GaussianProvider3D.evaluate_all` vectorized override added (broadcasting over `(n_kernels, n_pts, 3)` displacements, no Python loop); `VolumeInteractionBackend` created in `solvers/volume_interactions.py` with `interaction_matrix()`, `gram()`, `cross_gram()` methods; lazy `_K_cache`; exported from `solvers/__init__.py`; 4 new tests in `tests/solvers/test_volume_interaction_backend.py`; 876 total tests pass).
+> **Last updated:** 2026-03-23 (sola-structured-fast-path Phase 3 complete). **`sola-structured-fast-path` Phase 2 is complete** (`FunctionProvider3D.evaluate_all` default loop fallback added to `providers/base.py`; `GaussianProvider3D.evaluate_all` vectorized override added (broadcasting over `(n_kernels, n_pts, 3)` displacements, no Python loop); `VolumeInteractionBackend` created in `solvers/volume_interactions.py` with `interaction_matrix()`, `gram()`, `cross_gram()` methods; lazy `_K_cache`; exported from `solvers/__init__.py`; 4 new tests in `tests/solvers/test_volume_interaction_backend.py`; 876 total tests pass). **`sola-structured-fast-path` Phase 3 is complete** (`DenseVolumeSolaSolver` created in `solvers/dense_volume_sola.py` with `gram()`, `forward(f)`, `resolve(target_K_row)` methods backed by `VolumeInteractionBackend`; `scipy.linalg.cho_factor` precomputed for O(m²) repeated resolve calls; `SOLVER_REGISTRY` updated to 4 entries; `SolverRouter.recommend` extended with optional `provider` kwarg — recommends `DenseVolumeSolaSolver` when `provider` is a `FunctionProvider3D` + space is `Lebesgue3D` on `BoxDomain` + all forms are `VolumeKernel3D`; 12 new tests in `tests/solvers/test_dense_volume_sola.py`; `test_solver_registry.py` and `test_solver_router.py` count tests updated to 4; 890 total tests pass).
 
 ---
 
@@ -194,12 +194,17 @@ pygeoinf3D/
 │   │   ├── __init__.py        # Re-exports KLSampler3D
 │   │   └── kl_sampler.py      # KLSampler3D — Phase 2: _build_vectorized_evaluate (einsum path), sample()/sample_from_xis() dispatch to vectorized when has_tensor_product_structure
 │   ├── solvers/               # Solver registry and routing  ← solver-compatibility-framework
-│   │   ├── __init__.py        # Re-exports SolverSpec, SolverRegistry, SOLVER_REGISTRY, SpectralGramSolver, SolverRouter, SolverRecommendation, VolumeInteractionBackend
-│   │   ├── registry.py        # SolverSpec, SolverRegistry, SOLVER_REGISTRY singleton (3 entries)  ← Phase 1
+│   │   ├── __init__.py        # Re-exports SolverSpec, SolverRegistry, SOLVER_REGISTRY, SpectralGramSolver, DenseVolumeSolaSolver, SolverRouter, SolverRecommendation, VolumeInteractionBackend
+│   │   ├── registry.py        # SolverSpec, SolverRegistry, SOLVER_REGISTRY singleton (4 entries)  ← Phase 1 + sola-structured-fast-path Phase 3
 │   │   ├── spectral_gram.py   # SpectralGramSolver — fast spectral minimum-norm inversion  ← Phase 1
 │   │   ├── router.py          # SolverRouter, SolverRecommendation — inspect space+forms → recommend solver  ← Phase 2
-│   │   │                      #   recommend(space, forms): SpectralGramSolver > SOLAOperator3D > None
+│   │   │                      #   recommend(space, forms, *, provider=None): DenseVolumeSolaSolver (new) > SpectralGramSolver > SOLAOperator3D > None
+│   │   │                      #   provider kwarg: when FunctionProvider3D + Lebesgue3D + BoxDomain + all VolumeKernel3D → DenseVolumeSolaSolver
 │   │   │                      #   recommend_sampler(op): KLSampler3D if SpectralOperator3D
+│   │   ├── dense_volume_sola.py  # DenseVolumeSolaSolver — fast repeated SOLA on BoxDomain+Gaussian ← sola-structured-fast-path Phase 3
+│   │   │                      #   __init__(domain, provider, resolution=20, location='cell_centers', regularization=0.0)
+│   │   │                      #   gram() → (n_kernels, n_kernels) ndarray; forward(f) → (n_kernels,); resolve(target_K_row) → (n_kernels,)
+│   │   │                      #   Cholesky-cached for O(m²) repeated resolve calls
 │   │   └── volume_interactions.py  # VolumeInteractionBackend — kernel matrix assembly + caching  ← sola-structured-fast-path Phase 2
 │   │                          #   interaction_matrix() (n_kernels, n_pts), gram(), cross_gram(other)
 │   └── representations/       # Lebesgue coefficient architecture Phases 1-2
