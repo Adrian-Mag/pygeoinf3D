@@ -1,10 +1,10 @@
 # pygeoinf3D Living Reference
 
-> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are complete and archived. **`Sobolev3D` Phase 1 is complete** inside the active continuous path-integral Sobolev inversion plan. **`Path3D` Phase 2 is complete** (callable, polyline, and point-sample constructors; normalized arc-length parameterization; 25 tests). **`PathIntegralFunctional` Phase 3 is complete** (path-integral linear form; composite trapezoidal quadrature; scalar algebra; domain/type validation; 30 tests). **`SOLAOperator3D` Phase 4 + Phase 4 Revision is complete** (generalized to accept any `LinearForm` subclass — `VolumeKernel3D` or `PathIntegralFunctional` — including mixed stacks; dual returns `SumLinearForm` for multi-path and mixed stacks; 6+9 tests). **`SumLinearForm` is complete** (weighted sum composite form; basis-free evaluation; 9 tests). **`Sobolev3D.from_dual` Phase 5 is complete** (spectral representer formula for general `LinearForm`; recursive `SumLinearForm` branch; 8 new tests; end-to-end `path_integral_minimum_norm_demo.py`). **`sobolev-path-form-domain-refactor-plan.md` Phases 1–4 are complete and archived:** (1) `PathIntegralFunctional` requires `Sobolev3D` and rejects `Lebesgue3D`; `SumLinearForm` accepts any `HilbertSpace` domain. (2) `Sobolev3D.to_dual` returns duals anchored on `self`; all `from_dual` branches enforce strict `fp.domain is not self`. (3) `SOLAOperator3D` enforces `kernel.domain is domain`; `Sobolev3D` is a first-class domain; `_lebesgue_domain` bridge removed. (4) Living reference and canonical code examples updated. All 792 tests pass. The entire continuous path-integral Sobolev inversion plan is now complete. `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula; `Sobolev3D` is a first-class Hilbert space wrapping `Lebesgue3D` + a weight operator. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the remaining active architecture track. A full 6-notebook demo suite is committed. **`plot_paths3d_interactive` Phase 1 is complete** (Plotly-based interactive 3D path viewer in `plot.py`; exported from top-level `__init__`; targeted tests cover single/multi-path smoke, Plotly ImportError, n_samples validation, label mismatch, non-Path3D inputs, and optional domain box; `interactive-3d-path-visualization-plan.md` Phase 1 done). **`vectorize-hot-paths` Phase 1 is complete** (`PathIntegralFunctional.__init__` now caches `_t_arr`/`_pts` and `_eval_scale` from `arc_length_nodes` at construction time; `_mapping_impl` uses cached arrays instead of recomputing; 5 new tests; 810 tests total pass; `vectorize-hot-paths-plan.md` Phase 1 done). **`vectorize-hot-paths` Phase 2 is complete** (`KLSampler3D` now uses a fully-vectorized einsum-based evaluate closure when `has_tensor_product_structure` is True: `_build_vectorized_evaluate` precomputes mode index arrays `ix/iy/iz` at closure-construction time and evaluates using `_eval_1d_basis` + matmul per call — no Python loop over modes; `sample()` and `sample_from_xis()` both dispatch to the vectorized path; loop path retained for non-TP operators; 5 new tests (`test_kl_vectorized.py`): correctness match, scalar single-point, batch shape, sample_from_xis equivalence, speed >4x at n_modes=50; 815 tests total pass). **`vectorize-hot-paths` Phase 3 is complete** (`GeneralizedBoxLaplacian._apply` now uses batch matrix operations via `provider.evaluate_all_eigenfunctions(pts)` — both the coefficient computation (`Phi_quad @ (f_vals * weights)`) and the synthesis step (`alpha @ Phi`) are fully vectorized with no Python loop over modes; the result closure is also loop-free using the same batch API; 5 new tests (`test_generalized_box_laplacian_vectorized.py`): eigenfunction application, loop-match to rtol=1e-8, single-point scalar, batch shape, identity; 820 tests total pass). **`vectorize-hot-paths` Phase 4 is complete** (`Sobolev3D.from_dual` Branch 3 now dispatches across three paths based on the inverse-weight operator's provider: (1) **ultra-fast path** — when `fp` is a `PathIntegralFunctional` AND `inv_w._provider` is a `BoxLaplacianSpectrumProvider`, both analysis AND synthesis are fully vectorized: analysis uses `fp._eval_scale * np.trapezoid(provider.evaluate_all_eigenfunctions(fp._pts), fp._t_arr, axis=1)` returning coefficients in one batch, synthesis uses `alpha @ provider.evaluate_all_eigenfunctions(pts)` for a loop-free matmul; (2) **fast synthesis path** — for any other `LinearForm` with BLSP provider, loop analysis + vectorized `alpha @ Phi` synthesis; (3) **loop fallback** — retained for `SpectralOperator3D` without a BLSP provider. 11 new tests (`test_from_dual_vectorized.py`): fast-path correctness at 3 tolerances, scalar single-point, batch shape, generic form synthesis, fallback loop correctness, Branch-1 regression; 831 tests total pass).
+> **Status:** Foundation, SOLA operator, volumetric kernel providers, KL sampler / fast-path plot dispatch, least-norm demo, synced-slice comparison, `InverseBoxLaplacian`, `SpectralOperator3D`, `SpectralPowerBase3D`, `GeneralizedBoxLaplacian` (all 5 phases), and `BesselSobolevBox` (all 3 phases including docs/archive) are complete and archived. **`Sobolev3D` Phase 1 is complete** inside the active continuous path-integral Sobolev inversion plan. **`Path3D` Phase 2 is complete** (callable, polyline, and point-sample constructors; normalized arc-length parameterization; 25 tests). **`PathIntegralFunctional` Phase 3 is complete** (path-integral linear form; composite trapezoidal quadrature; scalar algebra; domain/type validation; 30 tests). **`SOLAOperator3D` Phase 4 + Phase 4 Revision is complete** (generalized to accept any `LinearForm` subclass — `VolumeKernel3D` or `PathIntegralFunctional` — including mixed stacks; dual returns `SumLinearForm` for multi-path and mixed stacks; 6+9 tests). **`SumLinearForm` is complete** (weighted sum composite form; basis-free evaluation; 9 tests). **`Sobolev3D.from_dual` Phase 5 is complete** (spectral representer formula for general `LinearForm`; recursive `SumLinearForm` branch; 8 new tests; end-to-end `path_integral_minimum_norm_demo.py`). **`sobolev-path-form-domain-refactor-plan.md` Phases 1–4 are complete and archived:** (1) `PathIntegralFunctional` requires `Sobolev3D` and rejects `Lebesgue3D`; `SumLinearForm` accepts any `HilbertSpace` domain. (2) `Sobolev3D.to_dual` returns duals anchored on `self`; all `from_dual` branches enforce strict `fp.domain is not self`. (3) `SOLAOperator3D` enforces `kernel.domain is domain`; `Sobolev3D` is a first-class domain; `_lebesgue_domain` bridge removed. (4) Living reference and canonical code examples updated. All 792 tests pass. The entire continuous path-integral Sobolev inversion plan is now complete. `BoxLaplacian` and `InverseBoxLaplacian` are thin wrappers over `GeneralizedBoxLaplacian`; `SpectralPowerBase3D` provides the reusable spectral-power engine; `BesselSobolevBox` extends `SpectralPowerBase3D` with a real-order shifted eigenvalue formula; `Sobolev3D` is a first-class Hilbert space wrapping `Lebesgue3D` + a weight operator. The Lebesgue coefficient architecture (phases 1–2 done; phases 3–5 active) is the remaining active architecture track. A full 6-notebook demo suite is committed. **`plot_paths3d_interactive` Phase 1 is complete** (Plotly-based interactive 3D path viewer in `plot.py`; exported from top-level `__init__`; targeted tests cover single/multi-path smoke, Plotly ImportError, n_samples validation, label mismatch, non-Path3D inputs, and optional domain box; `interactive-3d-path-visualization-plan.md` Phase 1 done). **`vectorize-hot-paths` Phase 1 is complete** (`PathIntegralFunctional.__init__` now caches `_t_arr`/`_pts` and `_eval_scale` from `arc_length_nodes` at construction time; `_mapping_impl` uses cached arrays instead of recomputing; 5 new tests; 810 tests total pass; `vectorize-hot-paths-plan.md` Phase 1 done). **`vectorize-hot-paths` Phase 2 is complete** (`KLSampler3D` now uses a fully-vectorized einsum-based evaluate closure when `has_tensor_product_structure` is True: `_build_vectorized_evaluate` precomputes mode index arrays `ix/iy/iz` at closure-construction time and evaluates using `_eval_1d_basis` + matmul per call — no Python loop over modes; `sample()` and `sample_from_xis()` both dispatch to the vectorized path; loop path retained for non-TP operators; 5 new tests (`test_kl_vectorized.py`): correctness match, scalar single-point, batch shape, sample_from_xis equivalence, speed >4x at n_modes=50; 815 tests total pass). **`vectorize-hot-paths` Phase 3 is complete** (`GeneralizedBoxLaplacian._apply` now uses batch matrix operations via `provider.evaluate_all_eigenfunctions(pts)` — both the coefficient computation (`Phi_quad @ (f_vals * weights)`) and the synthesis step (`alpha @ Phi`) are fully vectorized with no Python loop over modes; the result closure is also loop-free using the same batch API; 5 new tests (`test_generalized_box_laplacian_vectorized.py`): eigenfunction application, loop-match to rtol=1e-8, single-point scalar, batch shape, identity; 820 tests total pass). **`vectorize-hot-paths` Phase 4 is complete** (`Sobolev3D.from_dual` Branch 3 now dispatches across three paths based on the inverse-weight operator's provider: (1) **ultra-fast path** — when `fp` is a `PathIntegralFunctional` AND `inv_w._provider` is a `BoxLaplacianSpectrumProvider`, both analysis AND synthesis are fully vectorized: analysis uses `fp._eval_scale * np.trapezoid(provider.evaluate_all_eigenfunctions(fp._pts), fp._t_arr, axis=1)` returning coefficients in one batch, synthesis uses `alpha @ provider.evaluate_all_eigenfunctions(pts)` for a loop-free matmul; (2) **fast synthesis path** — for any other `LinearForm` with BLSP provider, loop analysis + vectorized `alpha @ Phi` synthesis; (3) **loop fallback** — retained for `SpectralOperator3D` without a BLSP provider. 11 new tests (`test_from_dual_vectorized.py`): fast-path correctness at 3 tolerances, scalar single-point, batch shape, generic form synthesis, fallback loop correctness, Branch-1 regression; 831 tests total pass). **`solver-compatibility-framework` Phase 1 is complete** (`SolverRegistry`, `SolverSpec`, and `SOLVER_REGISTRY` singleton with three entries — `SpectralGramSolver`, `SOLAOperator3D`, `KLSampler3D`; 15 tests; 846 total). **`solver-compatibility-framework` Phase 3 is complete** (`SpectralGramSolver` class docstring rewritten with structured `Requires`, `Performance`, `Raises`, and `See Also` sections; `TypeError` for wrong space type now mentions `SOLAOperator3D`; `TypeError` for wrong operator type now mentions `BesselSobolevBox` and `SOLAOperator3D`; new `ValueError` added when forms have mixed `n_quad` values; `SOLAOperator3D` class docstring upgraded with `Requires`, `Performance`, `See Also` sections; `KLSampler3D` class docstring upgraded with `Requires`, `Performance`, `See Also` sections; 3 new error-message quality tests in `test_solver_validation.py`; 861 total tests pass). **`solver-compatibility-framework-plan.md` all 4 phases are complete** (2026-03-23): Phase 4 added `docs/SOLVER_SELECTION_GUIDE.md` (ASCII decision tree, compatibility matrix, when-not-to-use, registry inspection, adding-a-solver guide) and a `## Solver Registry & Router` section in this living reference.
 >
 > **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5).
 >
-> **Last updated:** 2026-03-16 (sobolev-path-form-domain-refactor all 4 phases complete)
+> **Last updated:** 2026-03-23 (solver-compatibility-framework all 4 phases complete)
 
 ---
 
@@ -13,6 +13,7 @@
 | Plan | Status |
 |------|--------|
 | `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` | **Active** — phases 3–5 in progress |
+| `solver-compatibility-framework-plan.md` | **Complete** — all 4 phases done |
 | `sobolev-path-form-domain-refactor-plan.md` | **Complete** — all 4 phases done; archived to `completed-plans/` |
 | `continuous-path-integral-sobolev-inversion-plan.md` | **Complete** — all 5 phases done; archived to `completed-plans/` |
 | `bessel-sobolev-box-plan.md` | **Complete** — archived to `completed-plans/` |
@@ -172,7 +173,8 @@ pygeoinf3D/
 │   ├── providers/
 │   │   ├── __init__.py        # Re-exports FunctionProvider3D, KernelProvider3D, FunctionToKernelAdapter, TensorProductProvider; imports function_providers
 │   │   ├── base.py            # FunctionProvider3D (ABC), KernelProvider3D (ABC), FunctionToKernelAdapter  ← SOLA Phase 3
-│   │   ├── tensor_product.py  # TensorProductProvider  ← Phase 3
+│   │   ├── tensor_product.py  # TensorProductProvider, BoxLaplacianSpectrumProvider  ← Phase 3
+│   │                          #   BoxLaplacianSpectrumProvider.has_tensor_product_structure = True  ← solver-compat Phase 2
 │   │   └── function_providers/
 │   │       ├── __init__.py    # Re-exports FunctionProvider3D + 3 concrete providers ← kernel-providers Phase 1+2
 │   │       ├── gaussian.py    # GaussianProvider3D  ← kernel-providers Phase 2
@@ -187,10 +189,17 @@ pygeoinf3D/
 │   │   ├── generalized_box_laplacian.py  # GeneralizedBoxLaplacian (full impl, inherits SpectralPowerBase3D)  ← generalized-box-laplacian Phases 1–2
 │   │   ├── bessel_sobolev_box.py  # BesselSobolevBox (shifted spectral weights with real order)  ← bessel-sobolev-box-plan
 │   │   └── sola.py            # SOLAOperator3D  ← SOLA Phase 1+2+3+4+4R+5, sobolev-path-form-domain-refactor Phase 3
-                                          #   domain: Lebesgue3D | Sobolev3D; strict kernel.domain is domain check
+│   │                          #   domain: Lebesgue3D | Sobolev3D; strict kernel.domain is domain check
 │   ├── sampling/              # KL expansion sampler  ← spectral-kl plan
 │   │   ├── __init__.py        # Re-exports KLSampler3D
 │   │   └── kl_sampler.py      # KLSampler3D — Phase 2: _build_vectorized_evaluate (einsum path), sample()/sample_from_xis() dispatch to vectorized when has_tensor_product_structure
+│   ├── solvers/               # Solver registry and routing  ← solver-compatibility-framework
+│   │   ├── __init__.py        # Re-exports SolverSpec, SolverRegistry, SOLVER_REGISTRY, SpectralGramSolver, SolverRouter, SolverRecommendation
+│   │   ├── registry.py        # SolverSpec, SolverRegistry, SOLVER_REGISTRY singleton (3 entries)  ← Phase 1
+│   │   ├── spectral_gram.py   # SpectralGramSolver — fast spectral minimum-norm inversion  ← Phase 1
+│   │   └── router.py          # SolverRouter, SolverRecommendation — inspect space+forms → recommend solver  ← Phase 2
+│   │                          #   recommend(space, forms): SpectralGramSolver > SOLAOperator3D > None
+│   │                          #   recommend_sampler(op): KLSampler3D if SpectralOperator3D
 │   └── representations/       # Lebesgue coefficient architecture Phases 1-2
 │       ├── __init__.py        # Re-exports all representation public API
 │       ├── base.py            # CoefficientRepresentation3D (ABC), LebesgueCoefficientBackend (ABC)
@@ -231,6 +240,11 @@ pygeoinf3D/
 │   │   ├── __init__.py
 │   │   ├── test_kl_sampler.py        ← spectral-kl plan + GeneralizedBoxLaplacian integration (47 tests)
 │   │   └── test_kl_generalized_integration.py  ← generalized-box-laplacian plan Phase 4 (10 tests)
+│   ├── solvers/
+│   │   ├── __init__.py
+│   │   ├── test_solver_registry.py   ← solver-compatibility-framework Phase 1 (15 tests)
+│   │   ├── test_spectral_gram.py     ← solver-compatibility-framework Phase 1 (multiple tests)
+│   │   └── test_solver_router.py     ← solver-compatibility-framework Phase 2 (12 tests)
 │   ├── representations/              # Lebesgue coefficient architecture Phases 1-2
 │   │   ├── __init__.py
 │   │   ├── test_lebesgue_representation.py  ← architecture Phase 1
@@ -1949,3 +1963,45 @@ conda run -n inferences3 python -m pytest tests/ -q
 9. `from_dual` is **conservative**: only accepts `VolumeKernel3D` objects owned by *this* space instance. Generic `LinearForm` objects and foreign-space kernels are rejected.
 10. `SOLAOperator3D` is **fully basis-free on the domain side**: it uses `LinearForm.__call__` directly for each form without enumerating any domain basis. `LinearOperator.from_linear_forms` is explicitly avoided. The **dual mapping** extracts codomain-dual coordinates via `codomain.dual.to_components(yp)` and returns: (a) for n=1, `float(c[0]) * ℓ_0`; (b) for all-`VolumeKernel3D` stacks, a single `VolumeKernel3D` via direct addition; (c) for mixed or multi-path stacks, a `SumLinearForm` wrapping the weighted terms. The **adjoint mapping** chains `codomain.to_dual(y)` → dual mapping → `domain.from_dual(xp)`, which succeeds for `VolumeKernel3D` stacks and raises `TypeError` (with a Phase 5 hint) for `PathIntegralFunctional` or `SumLinearForm` dual results.
 11. `SOLAOperator3D` supports two construction modes: **sequence-backed** (eager, validates all forms at construction; rejects non-`LinearForm` items and cross-domain forms; **mixed types are now accepted**) and **provider-backed** (lazy, kernels fetched via `KernelProvider3D.get_kernel(i)` on demand and cached in `_kernel_cache: dict[int, LinearForm]`). The internal `_get_kernel(i)` method is the single dispatch point that both `_forward` and `_dual_mapping` use. The `.kernels` property materializes the full list via `_get_kernel` in both modes (returning cached objects for provider mode).
+
+---
+
+## Solver Registry & Router
+
+`SolverRegistry` is a simple name-keyed map of `SolverSpec` records, each of which declares
+a solver's required space types, operator types, functional types, purpose, and performance
+tier. The module-level `SOLVER_REGISTRY` singleton is populated at import time with the three
+built-in entries below. `SolverRouter` wraps the registry with a `recommend(space, forms)`
+method that applies heuristic compatibility checks at runtime and returns a `SolverRecommendation`
+(with `solver_spec`, `reason`, and `warnings`). A separate `recommend_sampler(op)` method
+handles the sampling path.
+
+See [docs/SOLVER_SELECTION_GUIDE.md](../../SOLVER_SELECTION_GUIDE.md) for the full ASCII decision tree, worked usage examples, and step-by-step instructions for adding a new solver.
+
+### Registry Entries
+
+| Solver | Space | Operator/Weight | Forms | Purpose | Performance |
+|---|---|---|---|---|---|
+| `SpectralGramSolver` | `Sobolev3D` | `SpectralOperator3D`; provider must have `has_tensor_product_structure = True` (e.g. `BesselSobolevBox` backed by `BoxLaplacianSpectrumProvider`) | `PathIntegralFunctional` (uniform `n_quad`) | `"inversion"` | `"fast"` |
+| `SOLAOperator3D` | `Lebesgue3D` or `Sobolev3D` | Any (duck-typed) | `VolumeKernel3D`, `PathIntegralFunctional`, `SumLinearForm`, or mixed | `"measurement_operator"` | `"general"` |
+| `KLSampler3D` | Any (via `SpectralOperator3D` covariance) | `SpectralOperator3D` | N/A (sampling) | `"sampling"` | `"sampling"` |
+
+### New Exports (solver-compatibility-framework plan)
+
+```python
+from pygeoinf3d import (
+    SpectralGramSolver,    # fast spectral minimum-norm inversion
+    SolverSpec,            # registry metadata dataclass
+    SolverRegistry,        # name-keyed spec map
+    SOLVER_REGISTRY,       # module-level singleton with 3 entries
+    SolverRouter,          # runtime compatibility inspector
+    SolverRecommendation,  # result dataclass: solver_spec, reason, warnings
+)
+```
+
+### `BoxLaplacianSpectrumProvider` tensor-product flag
+
+`BoxLaplacianSpectrumProvider.has_tensor_product_structure = True` (set in Phase 2 of
+the solver-compatibility-framework plan). This flag is checked by `SolverRouter.recommend`
+to decide whether `SpectralGramSolver` is eligible, and by `KLSampler3D` to dispatch to
+its vectorised einsum evaluation path.

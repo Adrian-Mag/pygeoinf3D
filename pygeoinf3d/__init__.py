@@ -34,6 +34,10 @@ from .operators.bessel_sobolev_box import BesselSobolevBox
 # SOLA operator — Phases 1-4: volume-kernel operator core, API locked
 from .operators.sola import SOLAOperator3D
 
+# Solver registry — Phase 1 of solver-compatibility-framework
+# Solver router — Phase 2 of solver-compatibility-framework
+from .solvers import SpectralGramSolver, SolverSpec, SolverRegistry, SOLVER_REGISTRY, SolverRouter, SolverRecommendation
+
 # Sampling — KL expansion sampler for Gaussian measures
 from .sampling import KLSampler3D
 
@@ -81,6 +85,14 @@ __all__ = [
     "BesselSobolevBox",
     # SOLA operator — Phases 1-4
     "SOLAOperator3D",
+    # Solver registry
+    "SpectralGramSolver",
+    "SolverSpec",
+    "SolverRegistry",
+    "SOLVER_REGISTRY",
+    # Solver router
+    "SolverRouter",
+    "SolverRecommendation",
     # Sampling
     "KLSampler3D",
     # Visualization helpers

@@ -124,6 +124,20 @@ class KLSampler3D:
     in pseudoinverse mode) contribute zero to the expansion because
     :math:`\\sqrt{\\max(\\lambda_k, 0)} = 0`.
 
+    Requires
+    --------
+    - **Operator:** Any :class:`~pygeoinf3d.operators.base.SpectralOperator3D`
+      (used as covariance).
+    - **Fast path:** Operator must have a provider with ``has_tensor_product_structure = True``
+      for vectorized einsum evaluation (applies to
+      :class:`~pygeoinf3d.providers.tensor_product.BoxLaplacianSpectrumProvider`).
+
+    Performance
+    -----------
+    - Fast path: O(N · p) per sample using vectorized einsum (no Python loop over modes).
+    - Loop fallback: O(N · p) per mode call for operators without tensor-product structure.
+    - Typical use: sample prior fields before or after inversion.
+
     Parameters
     ----------
     operator:
@@ -146,6 +160,11 @@ class KLSampler3D:
         If ``operator`` is not a :class:`~pygeoinf3d.operators.base.SpectralOperator3D`.
     ValueError
         If ``n_modes < 1`` or ``n_modes > operator.n_modes``.
+
+    See Also
+    --------
+    :class:`SpectralGramSolver` : For minimum-norm inversion rather than sampling.
+    :func:`~pygeoinf3d.solvers.router.SolverRouter.recommend_sampler` : Automatic sampler selection.
 
     Examples
     --------

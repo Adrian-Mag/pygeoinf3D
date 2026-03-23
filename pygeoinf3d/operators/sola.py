@@ -102,7 +102,7 @@ from pygeoinf3d.spaces.sobolev import Sobolev3D
 
 
 class SOLAOperator3D(LinearOperator):
-    """Forward mapping defined by stacked volume kernels.
+    """SOLA-style linear operator stacking general linear forms into a finite-dimensional output.
 
     Evaluates each linear form on the input function and assembles the scalar
     outputs into a codomain element via ``codomain.from_components``.
@@ -115,6 +115,25 @@ class SOLAOperator3D(LinearOperator):
     * A :class:`~pygeoinf3d.providers.base.KernelProvider3D` instance
       (lazy, provider-backed mode).  Kernels are fetched on demand via
       ``provider.get_kernel(i)`` and cached for stability.
+
+    Requires
+    --------
+    - **Space:** :class:`~pygeoinf3d.spaces.lebesgue.Lebesgue3D` or
+      :class:`~pygeoinf3d.spaces.sobolev.Sobolev3D`.
+    - **Forms:** :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D`,
+      :class:`~pygeoinf3d.spaces.forms.PathIntegralFunctional`,
+      :class:`~pygeoinf3d.spaces.forms.SumLinearForm`, or mixed stacks.
+      All forms must satisfy ``form.domain is domain``.
+    - **Adjoint:** Requires ``domain.from_dual`` to be implemented;
+      :class:`~pygeoinf3d.spaces.sobolev.Sobolev3D` with a
+      :class:`~pygeoinf3d.operators.base.SpectralOperator3D` weight provides this.
+
+    Performance
+    -----------
+    - O(m · N) per forward evaluation (m measurements, N quadrature/mode cost per form).
+    - No pre-computation; slower than :class:`~pygeoinf3d.solvers.spectral_gram.SpectralGramSolver`
+      for repeated solves on the same problem.  Suitable as a forward operator in
+      :class:`~pygeoinf.LinearMinimumNormInversion`.
 
     Parameters
     ----------
@@ -162,6 +181,11 @@ class SOLAOperator3D(LinearOperator):
     In provider-backed mode, per-kernel validation is deferred to first
     access: ``VolumeKernel3D`` will raise if the provider produces a kernel
     incompatible with *domain*.
+
+    See Also
+    --------
+    :class:`SpectralGramSolver` : Fast batch solver for PathIntegralFunctional on Sobolev3D.
+    :func:`~pygeoinf3d.solvers.router.SolverRouter.recommend` : Automatic solver selection.
     """
 
     def __init__(

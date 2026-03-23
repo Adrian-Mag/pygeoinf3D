@@ -142,6 +142,13 @@ class BoxLaplacianSpectrumProvider:
     an axis-aligned box with uniform Dirichlet or Neumann boundary conditions.
     Modes are sorted by increasing eigenvalue with lexicographic tie-break.
 
+    Class Attributes
+    ----------------
+    has_tensor_product_structure : bool
+        Always ``True`` for this class.  Used by :class:`SolverRouter` and
+        :class:`~pygeoinf3d.sampling.kl_sampler.KLSampler3D` to detect the
+        fast-path eigenbasis evaluators.
+
     Parameters
     ----------
     domain_or_space:
@@ -152,9 +159,9 @@ class BoxLaplacianSpectrumProvider:
         Number of modes per axis: a single integer *n* (same for all three
         axes) or a 3-tuple ``(n_x, n_y, n_z)``.
     bc_type:
-        ``'dirichlet'`` — zero Dirichlet on all faces
+        ``'dirichlet'`` -- zero Dirichlet on all faces
         (mode $k$ starts at 1).
-        ``'neumann'`` — zero Neumann on all faces
+        ``'neumann'`` -- zero Neumann on all faces
         (mode $k$ starts at 0, so the constant is included).
 
     Raises
@@ -175,6 +182,8 @@ class BoxLaplacianSpectrumProvider:
         phi0 = provider.get_eigenfunction(0)   # lowest Dirichlet mode
         lam0 = provider.get_eigenvalue(0)      # 3*pi^2 on unit box
     """
+
+    has_tensor_product_structure: bool = True
 
     def __init__(
         self,
