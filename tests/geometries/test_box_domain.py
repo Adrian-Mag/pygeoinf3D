@@ -9,6 +9,7 @@ Covers:
 - integrate_volume: constant and linear polynomial accuracy
 - boundary and boundary_components (six labeled faces)
 - sample_interior: shape and membership
+- Cache: structured_mesh and volume_weights cache reuse (Phase 1)
 """
 
 from __future__ import annotations
@@ -280,3 +281,82 @@ class TestBoxDomainBoundary:
         assert bnd.contains(np.array([0.0, 0.5, 0.5]))
         assert bnd.contains(np.array([1.0, 0.0, 0.8]))
         assert not bnd.contains(np.array([0.5, 0.5, 0.5]))
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: Quadrature cache
+# ---------------------------------------------------------------------------
+
+class TestBoxDomainQuadratureCache:
+
+    def test_structured_mesh_cache_returns_same_object(self, unit_box):
+        """Repeated calls with same args return the identical array object."""
+        pts1 = unit_box.structured_mesh(5)
+        pts2 = unit_box.structured_mesh(5)
+        assert pts1 is pts2
+
+    def test_structured_mesh_cache_same_object_nodes(self, unit_box):
+        """Cache also works for location='nodes'."""
+        pts1 = unit_box.structured_mesh(4, location='nodes')
+        pts2 = unit_box.structured_mesh(4, location='nodes')
+        assert pts1 is pts2
+
+    def test_structured_mesh_cache_different_resolutions_are_independent(self, unit_box):
+        """Different resolutions produce different (non-identical) objects."""
+        pts4 = unit_box.structured_mesh(4)
+        pts5 = unit_box.structured_mesh(5)
+        assert pts4 is not pts5
+
+    def test_structured_mesh_cache_different_locations_are_independent(self, unit_box):
+        """cell_centers and nodes produce different cached objects."""
+        pts_cc = unit_box.structured_mesh(4)
+        pts_nd = unit_box.structured_mesh(4, location='nodes')
+        assert pts_cc is not pts_nd
+
+    def test_volume_weights_cache_returns_same_object(self, unit_box):
+        """Repeated weight calls with same args return the identical array."""
+        w1 = unit_box.volume_weights(5)
+        w2 = unit_box.volume_weights(5)
+        assert w1 is w2
+
+    def test_volume_weights_cache_same_object_nodes(self, unit_box):
+        w1 = unit_box.volume_weights(4, location='nodes')
+        w2 = unit_box.volume_weights(4, location='nodes')
+        assert w1 is w2
+
+    def test_volume_weights_cache_different_resolutions_are_independent(self, unit_box):
+        w4 = unit_box.volume_weights(4)
+        w5 = unit_box.volume_weights(5)
+        assert w4 is not w5
+
+    def test_volume_weights_cache_different_locations_are_independent(self, unit_box):
+        """cell_centers and nodes weight arrays are independent cached objects."""
+        w_cc = unit_box.volume_weights(4)
+        w_nd = unit_box.volume_weights(4, location='nodes')
+        assert w_cc is not w_nd
+
+    def test_cache_is_per_instance(self):
+        """Two separate BoxDomain instances have independent caches (mesh)."""
+        d1 = BoxDomain(np.zeros(3), np.ones(3))
+        d2 = BoxDomain(np.zeros(3), np.ones(3))
+        pts1 = d1.structured_mesh(5)
+        pts2 = d2.structured_mesh(5)
+        assert pts1 is not pts2
+
+    def test_cache_is_per_instance_weights(self):
+        """Two separate BoxDomain instances have independent weight caches."""
+        d1 = BoxDomain(np.zeros(3), np.ones(3))
+        d2 = BoxDomain(np.zeros(3), np.ones(3))
+        w1 = d1.volume_weights(5)
+        w2 = d2.volume_weights(5)
+        assert w1 is not w2
+
+    def test_integrate_volume_matches_cached_mesh_dot_product(self, unit_box):
+        """integrate_volume(f) equals integrate_volume_on_mesh(f(pts), w)."""
+        res = 6
+        f = lambda x: x[:, 0] * x[:, 1] + x[:, 2] ** 2
+        pts = unit_box.structured_mesh(res)
+        w = unit_box.volume_weights(res)
+        direct = unit_box.integrate_volume_on_mesh(f(pts), w)
+        via_method = unit_box.integrate_volume(f, resolution=res)
+        npt.assert_allclose(via_method, direct, rtol=1e-12)

@@ -451,7 +451,18 @@ def plot_function3d_axis_slider(
         raise RuntimeError("Interactive slice sampling produced no frames.")
 
     init_idx = n_slices_int // 2
-    init_heatmap = go.Heatmap(
+
+    if title is None:
+        if function.name:
+            base_title = function.name
+        else:
+            base_title = 'Function3D slice viewer'
+        title = f"{base_title} ({axis_names[axis_idx]}-axis slider)"
+
+    make_subplots = _import_plotly_make_subplots()
+    fig = make_subplots(rows=1, cols=1, subplot_titles=[title])
+
+    fig.add_trace(go.Heatmap(
         z=slices[init_idx].tolist(),
         x=u_values.tolist(),
         y=v_values.tolist(),
@@ -459,7 +470,7 @@ def plot_function3d_axis_slider(
         zmax=zmax,
         colorscale=colorscale,
         colorbar=dict(title=dict(text='Value', side='right')),
-    )
+    ), row=1, col=1)
 
     frames = [
         go.Frame(
@@ -469,13 +480,7 @@ def plot_function3d_axis_slider(
         )
         for i, slice_ in enumerate(slices)
     ]
-
-    if title is None:
-        if function.name:
-            base_title = function.name
-        else:
-            base_title = 'Function3D slice viewer'
-        title = f"{base_title} ({axis_names[axis_idx]}-axis slider)"
+    fig.frames = frames
 
     slider = dict(
         active=init_idx,
@@ -507,17 +512,259 @@ def plot_function3d_axis_slider(
         pad=dict(t=10, b=10),
     )
 
-    fig = go.Figure(data=[init_heatmap], frames=frames)
     fig.update_layout(
-        title=title,
-        xaxis=dict(title=f"{axis_names[u_idx]} coordinate"),
-        yaxis=dict(title=f"{axis_names[v_idx]} coordinate"),
         sliders=[slider],
         width=650,
         height=600,
         margin=dict(l=70, r=70, t=70, b=100),
     )
-    fig.update_yaxes(scaleanchor='x', scaleratio=1)
+    fig.update_xaxes(title_text=f"{axis_names[u_idx]} coordinate", row=1, col=1)
+    fig.update_yaxes(
+        title_text=f"{axis_names[v_idx]} coordinate",
+        scaleanchor='x',
+        scaleratio=1,
+        row=1, col=1,
+    )
+
+    if show_plot:
+        fig.show()
+
+    return fig
+
+
+def plot_function3d_axis_dropdown_slider(
+    functions: list,
+    axis: Union[int, str] = 'z',
+    *,
+    n_slices: int = 20,
+    resolution: Union[int, Tuple[int, int]] = 100,
+    show_plot: bool = True,
+    title: Optional[str] = None,
+    labels: Optional[list] = None,
+    colorscale: str = 'Viridis',
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    per_function_colorscale: bool = True,
+    plot_n_modes: Optional[int] = None,
+) -> "go.Figure":
+    """Interactive heatmap with a **dropdown** to switch function and a **slider** to move the slice.
+
+    Unlike :func:`compare_function3d_axis_sliders` which displays all
+    functions side-by-side, this function overlays every function on the same
+    axes and exposes a dropdown menu to select which one is visible.  The
+    slider moves the slice plane along the chosen axis, and both controls work
+    independently.
+
+    Each function gets its own set of slider frames so the colour scale is
+    always derived from the selected function's data range.
+
+    Args:
+        functions: Non-empty list of ``Function3D`` objects sharing the same
+            bounding box.
+        axis: Slice-normal axis (``'x'``, ``'y'``, ``'z'`` or
+            ``0``/``1``/``2``).
+        n_slices: Number of slider positions spanning the full axis extent.
+        resolution: Grid resolution for each 2D slice.
+        show_plot: Whether to call ``fig.show()`` before returning.
+        title: Figure title. If ``None``, the active function label is used.
+        labels: Dropdown labels for each function. Defaults to
+            ``function.name`` or ``'Function i'``.
+        colorscale: Plotly colorscale name.
+        vmin: Shared lower colour limit. If omitted, each function uses its
+            own data-derived range.
+        vmax: Shared upper colour limit. If omitted, each function uses its
+            own data-derived range.
+        per_function_colorscale: When ``True`` and ``vmin``/``vmax`` are both
+            ``None``, each function is colour-scaled independently so that
+            low-amplitude functions remain visible. Set ``False`` to share a
+            global colour scale.
+
+    Returns:
+        A Plotly ``Figure`` with one heatmap trace per (function, slice)
+        combination and both dropdown and slider controls.
+
+    Raises:
+        ImportError: If Plotly is not installed.
+        ValueError: If ``functions`` is empty, bounding boxes mismatch, or
+            ``n_slices``/``resolution`` are invalid.
+    """
+    go = _import_plotly_graph_objects()
+    make_subplots = _import_plotly_make_subplots()
+
+    if not functions:
+        raise ValueError("functions must be a non-empty list of Function3D.")
+
+    n_fns        = len(functions)
+    axis_idx     = _parse_axis(axis)
+    n_slices_int = _validate_n_slices(n_slices)
+    axis_names   = _AXIS_NAMES
+    u_idx, v_idx = _get_other_axes(axis_idx)
+
+    # Validate bounding boxes
+    bbox0 = functions[0].domain.bounding_box()
+    for i, fn in enumerate(functions[1:], 1):
+        bb = fn.domain.bounding_box()
+        if not (np.allclose(bb.low, bbox0.low) and np.allclose(bb.high, bbox0.high)):
+            raise ValueError(
+                f"All functions must share the same bounding box. "
+                f"Function 0 has bbox {bbox0.low}–{bbox0.high}, "
+                f"function {i} has {bb.low}–{bb.high}."
+            )
+
+    fn_labels = labels if labels is not None else [
+        fn.name or f"Function {i + 1}" for i, fn in enumerate(functions)
+    ]
+
+    coords = np.linspace(
+        float(bbox0.low[axis_idx]),
+        float(bbox0.high[axis_idx]),
+        n_slices_int,
+    )
+
+    # Pre-compute all slices for every function
+    # slices_per_fn[fn_idx][slice_idx] → 2D ndarray (transposed for Plotly)
+    u_1d: Optional[np.ndarray] = None
+    v_1d: Optional[np.ndarray] = None
+    slices_per_fn: list[list[np.ndarray]] = [[] for _ in functions]
+    zmins: list[float] = []
+    zmaxs: list[float] = []
+
+    for fn_idx, fn in enumerate(functions):
+        for coord in coords:
+            gu, gv, vals = evaluate_function3d_on_axis_slice(
+                fn, axis=axis_idx, coord=float(coord),
+                resolution=resolution, plot_n_modes=plot_n_modes,
+            )
+            if u_1d is None:
+                u_1d = gu[:, 0]
+                v_1d = gv[0, :]
+            slices_per_fn[fn_idx].append(np.asarray(vals.T, dtype=float))
+
+        fn_concat = np.concatenate([s.ravel() for s in slices_per_fn[fn_idx]])
+        if vmin is not None and vmax is not None:
+            zmins.append(float(vmin))
+            zmaxs.append(float(vmax))
+        elif per_function_colorscale:
+            zmins.append(float(fn_concat.min()))
+            zmaxs.append(float(fn_concat.max()))
+        else:
+            # Accumulate globally — filled after all functions
+            zmins.append(float(fn_concat.min()))
+            zmaxs.append(float(fn_concat.max()))
+
+    if not per_function_colorscale and vmin is None and vmax is None:
+        global_min = min(zmins)
+        global_max = max(zmaxs)
+        zmins = [global_min] * n_fns
+        zmaxs = [global_max] * n_fns
+
+    if u_1d is None or v_1d is None:
+        raise RuntimeError("Slice sampling produced no frames.")
+
+    init_slice = n_slices_int // 2
+    fig = make_subplots(rows=1, cols=1)
+
+    # Add one heatmap trace per function (only the first is visible)
+    for fn_idx in range(n_fns):
+        fig.add_trace(go.Heatmap(
+            z=slices_per_fn[fn_idx][init_slice].tolist(),
+            x=u_1d.tolist(),
+            y=v_1d.tolist(),
+            zmin=zmins[fn_idx],
+            zmax=zmaxs[fn_idx],
+            colorscale=colorscale,
+            colorbar=dict(title=dict(text='Value', side='right')),
+            name=fn_labels[fn_idx],
+            visible=(fn_idx == 0),
+        ), row=1, col=1)
+
+    # Frames: n_fns × n_slices_int frames
+    # Frame name format: "<fn_idx>_<slice_idx>" so the dropdown can target
+    # the correct subset via the slider's step args.
+    frames = []
+    for fn_idx in range(n_fns):
+        for s_idx, slc in enumerate(slices_per_fn[fn_idx]):
+            frames.append(go.Frame(
+                data=[go.Heatmap(z=slc.tolist(),
+                                 zmin=zmins[fn_idx], zmax=zmaxs[fn_idx])],
+                traces=[fn_idx],
+                name=f"{fn_idx}_{s_idx}",
+            ))
+    fig.frames = frames
+
+    # Slider: steps cycle through slices for the *currently selected* function.
+    # The dropdown buttons update which trace is visible AND switch the slider's
+    # frame targets so the slider always drives the active function.
+    def _slider_steps(fn_idx: int) -> list:
+        return [
+            dict(
+                args=[
+                    [f"{fn_idx}_{s_idx}"],
+                    {'frame': {'duration': 0, 'redraw': True},
+                     'mode': 'immediate',
+                     'transition': {'duration': 0}},
+                ],
+                label=f"{float(coords[s_idx]):.3g}",
+                method='animate',
+            )
+            for s_idx in range(n_slices_int)
+        ]
+
+    slider = dict(
+        active=init_slice,
+        steps=_slider_steps(0),
+        currentvalue=dict(
+            prefix=f"{axis_names[axis_idx]} = ",
+            visible=True,
+            font=dict(size=14),
+        ),
+        len=0.88, x=0.06, xanchor='left',
+        y=0.0,    yanchor='top',
+        pad=dict(t=10, b=10),
+    )
+
+    # Dropdown buttons: each button makes one trace visible, resets the slider
+    # to the middle slice of that function, and switches slider step targets.
+    def _dropdown_button(fn_idx: int) -> dict:
+        visibility = [j == fn_idx for j in range(n_fns)]
+        btn_title  = title or fn_labels[fn_idx]
+        return dict(
+            label=fn_labels[fn_idx],
+            method='update',
+            args=[
+                {'visible': visibility},
+                {
+                    'title': btn_title,
+                    'sliders': [{**slider, 'active': init_slice,
+                                 'steps': _slider_steps(fn_idx)}],
+                },
+                [f"{fn_idx}_{init_slice}"],   # animate to mid-slice on switch
+            ],
+        )
+
+    dropdown = dict(
+        buttons=[_dropdown_button(i) for i in range(n_fns)],
+        direction='down',
+        showactive=True,
+        x=0.0, xanchor='left',
+        y=1.18, yanchor='top',
+    )
+
+    initial_title = title or fn_labels[0]
+    fig.update_layout(
+        title=initial_title,
+        updatemenus=[dropdown],
+        sliders=[slider],
+        width=650,
+        height=620,
+        margin=dict(l=70, r=70, t=100, b=110),
+    )
+    fig.update_xaxes(title_text=f"{axis_names[u_idx]} coordinate", row=1, col=1)
+    fig.update_yaxes(
+        title_text=f"{axis_names[v_idx]} coordinate",
+        scaleanchor='x', scaleratio=1,
+        row=1, col=1,
+    )
 
     if show_plot:
         fig.show()

@@ -303,6 +303,9 @@ class BoxDomain(StructuredDomain3D):
             dict[str, _BoxFaceBoundary]
         ] = None
 
+        # Quadrature cache: keys are ('mesh'|'weights', location, (nx, ny, nz))
+        self._quad_cache: dict = {}
+
     # ------------------------------------------------------------------
     # StructuredDomain3D abstract interface
     # ------------------------------------------------------------------
@@ -342,6 +345,10 @@ class BoxDomain(StructuredDomain3D):
             If *location* is not ``'cell_centers'`` or ``'nodes'``.
         """
         nx, ny, nz = _parse_resolution(resolution)
+        key = ("mesh", location, (nx, ny, nz))
+        if key in self._quad_cache:
+            return self._quad_cache[key]
+
         lo, hi = self._bbox.low, self._bbox.high
 
         if location == "cell_centers":
@@ -362,7 +369,9 @@ class BoxDomain(StructuredDomain3D):
             )
 
         xx, yy, zz = np.meshgrid(x, y, z, indexing="ij")
-        return np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
+        result = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
+        self._quad_cache[key] = result
+        return result
 
     def volume_weights(
         self,
@@ -388,6 +397,10 @@ class BoxDomain(StructuredDomain3D):
         """
         nx, ny, nz = _parse_resolution(resolution)
         location = kwargs.get("location", "cell_centers")
+        key = ("weights", location, (nx, ny, nz))
+        if key in self._quad_cache:
+            return self._quad_cache[key]
+
         lo, hi = self._bbox.low, self._bbox.high
 
         if location == "cell_centers":
@@ -409,7 +422,9 @@ class BoxDomain(StructuredDomain3D):
             )
 
         ww = np.einsum("i,j,k->ijk", wx, wy, wz)
-        return ww.ravel()
+        result = ww.ravel()
+        self._quad_cache[key] = result
+        return result
 
     @property
     def boundary_components(self) -> dict[str, _BoxFaceBoundary]:
