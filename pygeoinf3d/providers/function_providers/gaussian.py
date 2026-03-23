@@ -159,6 +159,47 @@ class GaussianProvider3D(FunctionProvider3D):
             name=f"gaussian_{i}",
         )
 
+    def evaluate_all(self, points: np.ndarray) -> np.ndarray:
+        """Evaluate all Gaussian functions at *points* simultaneously.
+
+        Vectorized over all kernels without a Python loop.  The *i*-th
+        row of the result is
+
+        .. math::
+
+            A_i \\exp\\!\\left(
+                -\\frac{1}{2}\\sum_{j=1}^{3}
+                \\frac{(x_j - c_{ij})^2}{\\sigma_{ij}^2}
+            \\right)
+
+        evaluated at every point in *points*.
+
+        Parameters
+        ----------
+        points : ndarray of shape ``(n_pts, 3)``
+            Evaluation points.
+
+        Returns
+        -------
+        ndarray of shape ``(dim, n_pts)``
+            Row *i* holds the values of the *i*-th Gaussian at all points.
+        """
+        points = np.asarray(points, dtype=float)          # (n_pts, 3)
+        c = self._centers                                  # (n, 3)
+        s = self._sigmas                                   # (n, 3)
+
+        # (n_kernels, n_pts, 3) displacement
+        d = points[np.newaxis, :, :] - c[:, np.newaxis, :]
+        # Sum of squared normalised displacements → (n_kernels, n_pts)
+        exponent = -0.5 * np.sum(d ** 2 / (s[:, np.newaxis, :] ** 2), axis=2)
+
+        if self._normalized:
+            A = 1.0 / (_SQRT_2PI ** 3 * s[:, 0] * s[:, 1] * s[:, 2])  # (n,)
+        else:
+            A = np.ones(len(c))
+
+        return A[:, np.newaxis] * np.exp(exponent)  # (n_kernels, n_pts)
+
     def __repr__(self) -> str:
         return (
             f"GaussianProvider3D(dim={self.dim}, "

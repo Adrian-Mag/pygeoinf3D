@@ -4,7 +4,7 @@
 >
 > **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5).
 >
-> **Last updated:** 2026-03-23 (solver-compatibility-framework all 4 phases complete)
+> **Last updated:** 2026-03-23 (sola-structured-fast-path Phase 2 complete). **`sola-structured-fast-path` Phase 2 is complete** (`FunctionProvider3D.evaluate_all` default loop fallback added to `providers/base.py`; `GaussianProvider3D.evaluate_all` vectorized override added (broadcasting over `(n_kernels, n_pts, 3)` displacements, no Python loop); `VolumeInteractionBackend` created in `solvers/volume_interactions.py` with `interaction_matrix()`, `gram()`, `cross_gram()` methods; lazy `_K_cache`; exported from `solvers/__init__.py`; 4 new tests in `tests/solvers/test_volume_interaction_backend.py`; 876 total tests pass).
 
 ---
 
@@ -194,12 +194,14 @@ pygeoinf3D/
 │   │   ├── __init__.py        # Re-exports KLSampler3D
 │   │   └── kl_sampler.py      # KLSampler3D — Phase 2: _build_vectorized_evaluate (einsum path), sample()/sample_from_xis() dispatch to vectorized when has_tensor_product_structure
 │   ├── solvers/               # Solver registry and routing  ← solver-compatibility-framework
-│   │   ├── __init__.py        # Re-exports SolverSpec, SolverRegistry, SOLVER_REGISTRY, SpectralGramSolver, SolverRouter, SolverRecommendation
+│   │   ├── __init__.py        # Re-exports SolverSpec, SolverRegistry, SOLVER_REGISTRY, SpectralGramSolver, SolverRouter, SolverRecommendation, VolumeInteractionBackend
 │   │   ├── registry.py        # SolverSpec, SolverRegistry, SOLVER_REGISTRY singleton (3 entries)  ← Phase 1
 │   │   ├── spectral_gram.py   # SpectralGramSolver — fast spectral minimum-norm inversion  ← Phase 1
-│   │   └── router.py          # SolverRouter, SolverRecommendation — inspect space+forms → recommend solver  ← Phase 2
-│   │                          #   recommend(space, forms): SpectralGramSolver > SOLAOperator3D > None
-│   │                          #   recommend_sampler(op): KLSampler3D if SpectralOperator3D
+│   │   ├── router.py          # SolverRouter, SolverRecommendation — inspect space+forms → recommend solver  ← Phase 2
+│   │   │                      #   recommend(space, forms): SpectralGramSolver > SOLAOperator3D > None
+│   │   │                      #   recommend_sampler(op): KLSampler3D if SpectralOperator3D
+│   │   └── volume_interactions.py  # VolumeInteractionBackend — kernel matrix assembly + caching  ← sola-structured-fast-path Phase 2
+│   │                          #   interaction_matrix() (n_kernels, n_pts), gram(), cross_gram(other)
 │   └── representations/       # Lebesgue coefficient architecture Phases 1-2
 │       ├── __init__.py        # Re-exports all representation public API
 │       ├── base.py            # CoefficientRepresentation3D (ABC), LebesgueCoefficientBackend (ABC)
@@ -2005,3 +2007,42 @@ from pygeoinf3d import (
 the solver-compatibility-framework plan). This flag is checked by `SolverRouter.recommend`
 to decide whether `SpectralGramSolver` is eligible, and by `KLSampler3D` to dispatch to
 its vectorised einsum evaluation path.
+
+---
+
+## Volume Interaction Backend
+
+`VolumeInteractionBackend` (in `pygeoinf3d/solvers/volume_interactions.py`, exported from
+`pygeoinf3d.solvers`) assembles and caches kernel evaluations on a structured quadrature mesh.
+
+### Purpose and Design
+- Works for **any** `FunctionProvider3D` (not just Gaussians).
+- Kernel evaluations are dispatched to `provider.evaluate_all(pts)`. For `GaussianProvider3D`
+  this is a vectorized numpy broadcast; for other providers the default loop fallback in
+  `FunctionProvider3D.evaluate_all` is used.
+- The interaction matrix `K` (shape `(n_kernels, n_pts)`) is computed lazily on the first
+  call and cached in `_K_cache`. Solver instances own their own cache — no shared state.
+- Quadrature points and weights come from `domain.structured_mesh(resolution, location)` and
+  `domain.volume_weights(resolution, location)`, which use `BoxDomain._quad_cache` internally.
+
+### API
+
+```python
+from pygeoinf3d.solvers import VolumeInteractionBackend
+
+backend = VolumeInteractionBackend(domain, provider, resolution=(16, 16, 16))
+K = backend.interaction_matrix()     # (n_kernels, n_pts),  cached
+G = backend.gram()                   # (n_kernels, n_kernels)  = K diag(w) K.T
+C = backend.cross_gram(other)        # (n_self, n_other)  — shared mesh required
+```
+
+### `FunctionProvider3D.evaluate_all`
+
+Added to `providers/base.py`. Default implementation loops over `get_function(i)(points)`;
+subclasses override for speed. `GaussianProvider3D` overrides with a vectorized form:
+
+```python
+d = points[np.newaxis, :, :] - centers[:, np.newaxis, :]   # (n, n_pts, 3)
+exponent = -0.5 * sum(d**2 / sigmas[:, np.newaxis, :]**2, axis=2)  # (n, n_pts)
+result = A[:, None] * exp(exponent)                          # (n, n_pts)
+```

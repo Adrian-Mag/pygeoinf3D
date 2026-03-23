@@ -27,6 +27,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 if TYPE_CHECKING:
     from pygeoinf3d.core.functions import Function3D
     from pygeoinf3d.spaces.forms import VolumeKernel3D
@@ -49,6 +51,25 @@ class FunctionProvider3D(ABC):
     @abstractmethod
     def get_function(self, i: int) -> "Function3D":
         """Return the *i*-th :class:`~pygeoinf3d.core.functions.Function3D`."""
+
+    def evaluate_all(self, points: np.ndarray) -> np.ndarray:
+        """Evaluate all functions at the given points.
+
+        Parameters
+        ----------
+        points : ndarray of shape ``(n_pts, 3)``
+            Evaluation points.
+
+        Returns
+        -------
+        ndarray of shape ``(dim, n_pts)``
+            Row *i* contains the values of the *i*-th function at all
+            *points*.  Subclasses may override this default with a
+            vectorized implementation for better performance.
+        """
+        points = np.asarray(points, dtype=float)
+        rows = [self.get_function(i)(points) for i in range(self.dim)]
+        return np.vstack(rows)
 
 
 class KernelProvider3D(ABC):
