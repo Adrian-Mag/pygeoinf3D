@@ -4,7 +4,9 @@
 >
 > **Active work:** `pygeoinf3d-lebesgue-coefficient-architecture-plan.md` (phases 3–5).
 >
-> **Last updated:** 2026-03-23 (sola-structured-fast-path Phase 5 complete). **`sola-structured-fast-path` Phase 5 is complete** (`DenseVolumeSolaSolver.forward_operator(function_space)` added: wraps the precomputed K matrix as a `pygeoinf.LinearOperator` with domain = supplied `Lebesgue3D`, codomain = `EuclideanSpace(n_kernels)`; exact L² adjoint `A*(d)(x) = ∑_i d_i k_i(x)` implemented via `provider.evaluate_all`; dual mapping returns a `VolumeKernel3D` sum; enables `GaussianMeasure.affine_mapping(operator=A_fwd)` — if prior covariance is C, data covariance = A_fwd C A_fwd*; composition A A* = Gram G exact to machine precision; pygeoinf NOT modified; 10 new integration tests in `tests/solvers/test_dense_volume_sola_integration.py`; 905 total tests pass). **`sola-structured-fast-path` Phase 2 is complete** (`FunctionProvider3D.evaluate_all` default loop fallback added to `providers/base.py`; `GaussianProvider3D.evaluate_all` vectorized override added (broadcasting over `(n_kernels, n_pts, 3)` displacements, no Python loop); `VolumeInteractionBackend` created in `solvers/volume_interactions.py` with `interaction_matrix()`, `gram()`, `cross_gram()` methods; lazy `_K_cache`; exported from `solvers/__init__.py`; 4 new tests in `tests/solvers/test_volume_interaction_backend.py`; 876 total tests pass). **`sola-structured-fast-path` Phase 3 is complete** (`DenseVolumeSolaSolver` created in `solvers/dense_volume_sola.py` with `gram()`, `forward(f)`, `resolve(target_K_row)` methods backed by `VolumeInteractionBackend`; `scipy.linalg.cho_factor` precomputed for O(m²) repeated resolve calls; `SOLVER_REGISTRY` updated to 4 entries; `SolverRouter.recommend` extended with optional `provider` kwarg — recommends `DenseVolumeSolaSolver` when `provider` is a `FunctionProvider3D` + space is `Lebesgue3D` on `BoxDomain` + all forms are `VolumeKernel3D`; 12 new tests in `tests/solvers/test_dense_volume_sola.py`; `test_solver_registry.py` and `test_solver_router.py` count tests updated to 4; 890 total tests pass). **`sola-structured-fast-path` Phase 4 is complete** (`SpectralGramSolver` extended to accept `VolumeKernel3D` forms and mixed `PathIntegralFunctional + VolumeKernel3D` stacks on `Sobolev3D`: new `_build_L_volume(volume_forms, provider, domain, resolution)` static method assembles $L_{i,k} = \sum_j k_i(\mathbf{x}_j)\,\Phi_k(\mathbf{x}_j)\,w_j$ via `BoxDomain.structured_mesh` + `evaluate_all_eigenfunctions`; constructor accepts a new `resolution` kwarg (default 20); form-type validation now accepts both `PathIntegralFunctional` and `VolumeKernel3D`; `n_quad` consistency check restricted to path-only forms; L matrix rows assembled by type and stitched back in original form order; `SolverRouter` updated to recommend `SpectralGramSolver` for Sobolev3D + all-volume or mixed stacks; 2 existing router tests updated to expect `SpectralGramSolver` instead of `SOLAOperator3D`; 5 new tests in `tests/solvers/test_spectral_gram_volume.py`; 895 total tests pass).
+> **Last updated:** 2026-05-XX (generalised data noise covariance for push-through methods complete; 955 total tests pass).
+> **`generalised-noise-cov` is complete**: `VolumeInteractionBackend.build_model_gram` now accepts `noise_cov` as `float` (std dev → `C_D = σ²I`), `1D ndarray` (per-datum std devs → `C_D = diag(σᵢ²)`), or `2D ndarray` (full SPD `C_D`). New `_NoiseCovModel` helper class encapsulates `C_D⁻¹` application. Push-through methods (`solve`, `reconstruct`, `compute_sola_matrix`, `resolve`) renamed `noise_std→noise_cov`; all three input forms use the **Woodbury** formula `(C_D + K̃K̃ᵀ)⁻¹ = C_D⁻¹ − C_D⁻¹K̃(I+K̃ᵀC_D⁻¹K̃)⁻¹K̃ᵀC_D⁻¹` with `M_CD = I+K̃ᵀC_D⁻¹K̃` (vs old `M = σ²I+K̃ᵀK̃`, a factor of `1/σ²` difference). Old `noise_std=` keyword retained as a deprecated shim (`DeprecationWarning`). Dense 2D `C_D` requires K cached (runtime error otherwise). 19 new tests added (`TestGeneralNoiseCov` × 10 + `TestBuildModelGramGeneralNoise` × 9); 955 total tests pass (up from 936).
+> **`sola-structured-fast-path` push-through Phase 2 is complete** (`DenseVolumeSolaSolver` extended with three push-through identity methods: `solve(d, noise_std, chunk_size=None)` → `(N_d,)` solves `(GG*+σ²I)q=d` via model-space Cholesky `M=K̃^T K̃+σ²I`; `reconstruct(d, noise_std, chunk_size=None)` → `Function3D` with `m̂(x)=Σ_i q_i k_i(x)`; `compute_sola_matrix(target_solver, noise_std, chunk_size=None)` → `(N_p,N_d)` matrix `X=K̃_T M^{-1} K̃_G^T` chunked over N_d; `_ensure_model_cho` lazily caches M/cho/sqrt_w, invalidated on noise_std change; target kernels evaluated at forward solver's quadrature pts in `compute_sola_matrix` (handles differing resolutions); 10 new tests in `tests/solvers/test_dense_volume_sola.py`; 924 total tests pass). (`DenseVolumeSolaSolver.forward_operator(function_space)` added: wraps the precomputed K matrix as a `pygeoinf.LinearOperator` with domain = supplied `Lebesgue3D`, codomain = `EuclideanSpace(n_kernels)`; exact L² adjoint `A*(d)(x) = ∑_i d_i k_i(x)` implemented via `provider.evaluate_all`; dual mapping returns a `VolumeKernel3D` sum; enables `GaussianMeasure.affine_mapping(operator=A_fwd)` — if prior covariance is C, data covariance = A_fwd C A_fwd*; composition A A* = Gram G exact to machine precision; pygeoinf NOT modified; 10 new integration tests in `tests/solvers/test_dense_volume_sola_integration.py`; 905 total tests pass). **`sola-structured-fast-path` Phase 2 is complete** (`FunctionProvider3D.evaluate_all` default loop fallback added to `providers/base.py`; `GaussianProvider3D.evaluate_all` vectorized override added (broadcasting over `(n_kernels, n_pts, 3)` displacements, no Python loop); `VolumeInteractionBackend` created in `solvers/volume_interactions.py` with `interaction_matrix()`, `gram()`, `cross_gram()` methods; lazy `_K_cache`; exported from `solvers/__init__.py`; 4 new tests in `tests/solvers/test_volume_interaction_backend.py`; 876 total tests pass). **`sola-structured-fast-path` Phase 3 is complete** (`DenseVolumeSolaSolver` created in `solvers/dense_volume_sola.py` with `gram()`, `forward(f)`, `resolve(target_K_row)` methods backed by `VolumeInteractionBackend`; `scipy.linalg.cho_factor` precomputed for O(m²) repeated resolve calls; `SOLVER_REGISTRY` updated to 4 entries; `SolverRouter.recommend` extended with optional `provider` kwarg — recommends `DenseVolumeSolaSolver` when `provider` is a `FunctionProvider3D` + space is `Lebesgue3D` on `BoxDomain` + all forms are `VolumeKernel3D`; 12 new tests in `tests/solvers/test_dense_volume_sola.py`; `test_solver_registry.py` and `test_solver_router.py` count tests updated to 4; 890 total tests pass). **`sola-structured-fast-path` Phase 4 is complete** (`SpectralGramSolver` extended to accept `VolumeKernel3D` forms and mixed `PathIntegralFunctional + VolumeKernel3D` stacks on `Sobolev3D`: new `_build_L_volume(volume_forms, provider, domain, resolution)` static method assembles $L_{i,k} = \sum_j k_i(\mathbf{x}_j)\,\Phi_k(\mathbf{x}_j)\,w_j$ via `BoxDomain.structured_mesh` + `evaluate_all_eigenfunctions`; constructor accepts a new `resolution` kwarg (default 20); form-type validation now accepts both `PathIntegralFunctional` and `VolumeKernel3D`; `n_quad` consistency check restricted to path-only forms; L matrix rows assembled by type and stitched back in original form order; `SolverRouter` updated to recommend `SpectralGramSolver` for Sobolev3D + all-volume or mixed stacks; 2 existing router tests updated to expect `SpectralGramSolver` instead of `SOLAOperator3D`; 5 new tests in `tests/solvers/test_spectral_gram_volume.py`; 895 total tests pass).
 
 ---
 
@@ -150,7 +152,7 @@ pygeoinf3D/
 │   └── path_integral_minimum_norm_demo.py        # End-to-end path-integral minimum-norm inversion (Phase 5)
 ├── pygeoinf3d/
 │   ├── __init__.py          # Re-exports all public API
-│   ├── plot.py              # Visualization (static slices + Plotly sliders + volume/isosurface helpers + plot_paths3d_interactive)
+│   ├── plot.py              # Visualization (static slices + Plotly sliders + volume/isosurface helpers + plot_paths3d_interactive + compare_panels_axis_dropdown_sliders)
 │   ├── core/
 │   │   ├── __init__.py
 │   │   ├── config.py        # AxisAlignedBoundingBox, CoordinateSystem
@@ -201,15 +203,32 @@ pygeoinf3D/
 │   │   │                      #   recommend(space, forms, *, provider=None): DenseVolumeSolaSolver (new) > SpectralGramSolver > SOLAOperator3D > None
 │   │   │                      #   provider kwarg: when FunctionProvider3D + Lebesgue3D + BoxDomain + all VolumeKernel3D → DenseVolumeSolaSolver
 │   │   │                      #   recommend_sampler(op): KLSampler3D if SpectralOperator3D
-│   │   ├── dense_volume_sola.py  # DenseVolumeSolaSolver — fast repeated SOLA on BoxDomain+Gaussian ← sola-structured-fast-path Phases 3+5
+│   │   ├── dense_volume_sola.py  # DenseVolumeSolaSolver — fast repeated SOLA on BoxDomain+Gaussian ← sola-structured-fast-path Phases 3+5+Phase2-pushthrough+generalised-noise-cov
 │   │   │                      #   __init__(domain, provider, resolution=20, location='cell_centers', regularization=0.0)
-│   │   │                      #   gram() → (n_kernels, n_kernels) ndarray; forward(f) → (n_kernels,); resolve(target_K_row) → (n_kernels,)
+│   │   │                      #   gram() → (n_kernels, n_kernels) ndarray; forward(f) → (n_kernels,); resolve(target_K_row, noise_cov=None, *, noise_std=None) → (n_kernels,)
 │   │   │                      #   Cholesky-cached for O(m²) repeated resolve calls
 │   │   │                      #   forward_operator(function_space) → pygeoinf.LinearOperator (Phase 5)
 │   │   │                      #     domain=function_space, codomain=EuclideanSpace(n_kernels)
 │   │   │                      #     A*(d)(x)=∑_i d_i k_i(x) via provider.evaluate_all; A@A*=Gram exact; enables GaussianMeasure.affine_mapping
-│   │   └── volume_interactions.py  # VolumeInteractionBackend — kernel matrix assembly + caching  ← sola-structured-fast-path Phase 2
-│   │                          #   interaction_matrix() (n_kernels, n_pts), gram(), cross_gram(other)
+│   │   │                      #   PUSH-THROUGH METHODS (generalised noise cov):
+│   │   │                      #   solve(d, noise_cov, chunk_size=None, *, noise_std=None) → (N_d,)
+│   │   │                      #     float: q=(GG*+σ²I)⁻¹d; 1D: per-datum σᵢ; 2D: full C_D SPD matrix
+│   │   │                      #     all via Woodbury: M_CD=I+K̃ᵀC_D⁻¹K̃; f=C_D⁻¹d; v=K̃ᵀf; z=M_CD⁻¹v; return f-C_D⁻¹(Kz)
+│   │   │                      #   reconstruct(d, noise_cov, chunk_size=None, *, noise_std=None) → Function3D   — m̂(x)=∑_i q_i k_i(x)
+│   │   │                      #   compute_sola_matrix(target_solver, noise_cov, chunk_size=None, *, noise_std=None) → (N_p, N_d)
+│   │   │                      #     X = K̃_T M_CD⁻¹ K̃_Gᵀ C_D⁻¹  (chunked over N_d)
+│   │   │                      #   _ensure_model_cho(noise_cov) — cache keyed by _model_noise_key (hashable tuple from _noise_cov_key())
+│   │   │                      #   NOTE: Dense 2D C_D requires K cached; raises RuntimeError otherwise
+│   │   │                      #   NOTE: noise_std= keyword deprecated (DeprecationWarning); use noise_cov=
+│   │   │                      #   NOTE: compute_sola_matrix evaluates target kernels at self's quadrature pts (handles different resolutions)
+│   │   └── volume_interactions.py  # VolumeInteractionBackend + _NoiseCovModel  ← sola-structured-fast-path Phase 2 + generalised-noise-cov
+│   │                          #   _NoiseCovModel: helper encapsulating C_D⁻¹ application
+│   │                          #     __init__(cd_inv_diag, cd_cho): scalar/1D → cd_inv_diag; dense → cd_cho (cho_factor)
+│   │                          #     apply_inv(d) → C_D⁻¹d
+│   │                          #   VolumeInteractionBackend: interaction_matrix() (n_kernels, n_pts), gram(), cross_gram(other)
+│   │                          #   build_model_gram(noise_cov, chunk_size=None) → (M_CD, cho_M_CD, _NoiseCovModel)
+│   │                          #     M_CD = I + K̃ᵀ C_D⁻¹ K̃  (was: σ²I + K̃ᵀK̃ — factor of 1/σ² difference)
+│   │                          #     float σ → inv_var=1/σ²; 1D σᵢ → inv_var=1/σᵢ²; 2D SPD C_D → cho_factor(C_D)
 │   └── representations/       # Lebesgue coefficient architecture Phases 1-2
 │       ├── __init__.py        # Re-exports all representation public API
 │       ├── base.py            # CoefficientRepresentation3D (ABC), LebesgueCoefficientBackend (ABC)
@@ -255,14 +274,15 @@ pygeoinf3D/
 │   │   ├── test_solver_registry.py   ← solver-compatibility-framework Phase 1 (15 tests)
 │   │   ├── test_spectral_gram.py     ← solver-compatibility-framework Phase 1 (multiple tests)
 │   │   ├── test_solver_router.py     ← solver-compatibility-framework Phase 2 (12 tests)
-│   │   ├── test_dense_volume_sola.py ← sola-structured-fast-path Phase 3 (12 tests)
+│   │   ├── test_dense_volume_sola.py ← sola-structured-fast-path Phase 3 (12 tests) + Phase 2 push-through (10 new tests: TestPushThroughSolve, TestReconstruct, TestComputeSolaMatrix) + generalised-noise-cov (10 new: TestGeneralNoiseCov)
+│   │   ├── test_volume_interaction_backend.py ← sola-structured-fast-path Phase 2 (4 tests) + generalised-noise-cov (9 new: TestBuildModelGramGeneralNoise)
 │   │   ├── test_spectral_gram_volume.py ← sola-structured-fast-path Phase 4 (5 tests)
 │   │   └── test_dense_volume_sola_integration.py ← sola-structured-fast-path Phase 5 (10 integration tests)
 │   ├── representations/              # Lebesgue coefficient architecture Phases 1-2
 │   │   ├── __init__.py
 │   │   ├── test_lebesgue_representation.py  ← architecture Phase 1
 │   │   └── test_projection_backends.py     ← architecture Phase 2
-│   └── test_plot.py                  ← plot Phase 3 + slider + volume/isosurface + n_modes cap (42 tests)
+│   └── test_plot.py                  ← plot Phase 3 + slider + volume/isosurface + n_modes cap + compare_panels (64 tests)
 └── docs/
     └── agent-docs/
         ├── active-plans/
@@ -935,6 +955,64 @@ all subplots simultaneously.
 - `n_slices ≤ 0` or malformed `resolution` → `ValueError`
 - Plotly not installed → `ImportError`
 
+#### `compare_panels_axis_dropdown_sliders`
+
+```python
+compare_panels_axis_dropdown_sliders(
+    panel_functions: list[list[Function3D]],
+    axis: int | str = 'z',
+    *,
+    n_slices: int = 20,
+    resolution: int | tuple[int, int] = 100,
+    show_plot: bool = True,
+    panel_labels: list[list[str]] | None = None,
+    panel_titles: list[str] | None = None,
+    colorscale: str = 'Viridis',
+    vmin: float | None = None,
+    vmax: float | None = None,
+    plot_n_modes: int | None = None,
+    width: int | None = None,
+    height: int | None = None,
+) -> plotly.graph_objects.Figure
+```
+
+Creates a Plotly figure with:
+- **N panels** side by side (one per inner list in `panel_functions`)
+- **One dropdown per panel** — lets the user select which function from that panel's candidate list to display (uses `restyle` so panels are fully independent)
+- **One shared slider** — advances the slice plane along the chosen axis and updates all panels simultaneously
+
+This is the recommended viewer for side-by-side resolving-kernel vs. target-kernel comparisons in SOLA demos.
+
+| Arg | Description |
+|-----|-------------|
+| `panel_functions` | Outer list: panels. Inner list: candidate `Function3D` objects for that panel's dropdown. All functions must share the same bounding box. |
+| `axis` | `'x'`/`'y'`/`'z'` or `0`/`1`/`2` |
+| `n_slices` | Positive integer slider positions |
+| `panel_labels` | `list[list[str]]` matching nesting shape of `panel_functions`; defaults to `function.name` or `'Function i'` |
+| `panel_titles` | Per-panel subplot titles; defaults to first label (single-function panels) or `'Panel p'` |
+| `colorscale` | Plotly colorscale name, applied to all traces |
+| `vmin`, `vmax` | Global colour limits; per-panel independently-set limits used if omitted |
+
+**Trace layout:** `panel_offsets[p] = sum(len(panel_functions[q]) for q < p)`.
+Panel `p`'s traces occupy indices `panel_offsets[p] … panel_offsets[p] + len(panel_functions[p]) - 1`.
+
+**Frame structure:** Each `go.Frame` carries one `Heatmap` per (panel × candidate function) and sets `traces=[0, 1, …, total-1]`.
+
+**Dropdown isolation:** Each dropdown's buttons use `method='restyle'` with `args=[visibility_list, panel_trace_range]` so changing a panel's function never affects any other panel.
+
+**Colorbar positioning:** Each panel's colorbar is placed at `min(right_edge + 0.01, 1.0)` (paper coords) to avoid clipping outside the figure's right margin on fixed-width figures.
+
+**Validation errors:**
+- Empty `panel_functions` → `ValueError` (match `"non-empty"`)
+- Any inner panel list is empty → `ValueError` (match `"empty"`)
+- `panel_labels` outer length ≠ n_panels → `ValueError` (match `"same length"`)
+- `panel_labels[p]` inner length ≠ `len(panel_functions[p])` → `ValueError` (match `"same length"`)
+- `panel_titles` length ≠ n_panels → `ValueError` (match `"panel_titles"`)
+- Incompatible bounding boxes → `ValueError` (match `"bounding box"`)
+- Plotly not installed → `ImportError`
+
+**Exported from:** `pygeoinf3d.__init__` (public API); `pygeoinf3d.plot` (direct import).
+
 #### `plot_paths3d_interactive`
 
 ```python
@@ -985,7 +1063,7 @@ paths (new cell after Cell 15).
 | `_validate_n_samples(n)` | Validates `n >= 2` for `plot_paths3d_interactive`; raises `ValueError` |
 | `_bbox_wireframe_trace(go, low, high)` | Builds a single `Scatter3d` 12-edge bounding-box wireframe using `None` separators (dashed grey) |
 | `_import_plotly_graph_objects()` | Lazy optional Plotly import with install hint |
-| `_import_plotly_make_subplots()` | Lazy import of `plotly.subplots.make_subplots` with same install hint |
+| `_import_plotly_make_subplots()` | Lazy import of `plotly.subplots.make_subplots` with generic install hint (not function-specific) |
 
 ### Type Notes
 
@@ -1028,6 +1106,20 @@ paths (new cell after Cell 15).
 | `test_plot_paths3d_interactive_no_domain_box_by_default` | Default `show_domain_box=False` yields exactly 1 trace |
 | `test_plot_paths3d_interactive_labels_length_mismatch` | Labels list wrong length raises `ValueError` |
 | `test_plot_paths3d_interactive_non_path3d_element` | Non-`Path3D` item in list raises `ValueError` |
+| `test_compare_panels_axis_dropdown_sliders_smoke` | 2 panels × 2 fns each: 1 slider, 2 dropdowns, 4 traces (correct initial visibility), 3 frames |
+| `test_compare_panels_axis_dropdown_sliders_frames` | Each frame updates all total_traces entries and sets `traces=[0..n-1]` |
+| `test_compare_panels_axis_dropdown_sliders_dropdown_isolation` | Panel 0 dropdown buttons use `restyle` targeting `{0,1}`; panel 1 targeting `{2,3}` |
+| `test_compare_panels_axis_dropdown_sliders_per_panel_color` | f2=100×f1: panel 1 trace zmax > 10× panel 0 trace zmax |
+| `test_compare_panels_axis_dropdown_sliders_global_vmin_vmax` | Explicit `vmin`/`vmax` locks all traces to that range |
+| `test_compare_panels_axis_dropdown_sliders_custom_labels` | Custom `panel_labels` appear as button labels in correct dropdown |
+| `test_compare_panels_axis_dropdown_sliders_single_panel` | Single panel with 2 fns: 1 dropdown, 1 slider, 2 traces |
+| `test_compare_panels_axis_dropdown_sliders_validation_empty` | Empty outer list raises `ValueError("non-empty")` |
+| `test_compare_panels_axis_dropdown_sliders_validation_empty_panel` | Inner empty list raises `ValueError("empty")` |
+| `test_compare_panels_axis_dropdown_sliders_validation_panel_labels_outer_mismatch` | Outer labels length ≠ n_panels raises `ValueError("same length")` |
+| `test_compare_panels_axis_dropdown_sliders_validation_panel_labels_inner_mismatch` | Inner label count ≠ panel fn count raises `ValueError("same length")` |
+| `test_compare_panels_axis_dropdown_sliders_validation_panel_titles_mismatch` | `panel_titles` wrong length raises `ValueError("panel_titles")` |
+| `test_compare_panels_axis_dropdown_sliders_validation_bbox_mismatch` | Incompatible bboxes raise `ValueError("bounding box")` |
+| `test_compare_panels_axis_dropdown_sliders_requires_plotly` | Monkeypatched missing Plotly raises `ImportError` |
 
 ---
 
@@ -2071,18 +2163,34 @@ End-to-end pipeline from `BoxDomain` + `FunctionProvider3D` to a pygeoinf-compat
 BoxDomain + FunctionProvider3D
         │
         ▼
-VolumeInteractionBackend          (Phase 2)
+VolumeInteractionBackend + _NoiseCovModel   (Phase 2 + generalised-noise-cov)
   _pts: (n_pts, 3)
   _weights: (n_pts,)
   _K_cache: lazy(m, n_pts)        ← one BLAS call, reused forever
-  gram(), cross_gram()
+  gram(), cross_gram(other)
+  build_model_gram(noise_cov)  → (M_CD, cho_M_CD, _NoiseCovModel)
+    noise_cov: float σ  → C_D = σ²I,   M_CD = I + (1/σ²) K̃ᵀK̃
+               1D σᵢ  → C_D = diag(σᵢ²), M_CD = I + K̃ᵀ diag(1/σᵢ²) K̃
+               2D A   → C_D = A (SPD),  M_CD = I + K̃ᵀ cho_solve(C_D, K̃)
+  _NoiseCovModel.apply_inv(d) → C_D⁻¹d
         │
         ▼
-DenseVolumeSolaSolver             (Phase 3 + Phase 5)
-  gram()           → G = K diag(w) K.T           O(m² n_pts) once
-  forward(f)       → K @ (w * f(pts))            O(m n_pts) per call
-  resolve(row)     → cho_solve(G, cross)          O(m²) per call
-  forward_operator(space)  → pygeoinf.LinearOperator  (Phase 5)
+DenseVolumeSolaSolver             (Phase 3 + Phase 5 + Phase 2 push-through + generalised-noise-cov)
+  gram()           → G = K diag(w) K.T              O(m² n_pts) once
+  forward(f)       → K @ (w * f(pts))               O(m n_pts) per call
+  resolve(row, noise_cov=None)  → cho_solve(G, cross)  O(m²) per call
+  forward_operator(space)  → pygeoinf.LinearOperator (Phase 5)
+  ── Push-through (Woodbury) ───────────────────────────────────────────────
+  Woodbury: (C_D + K̃K̃ᵀ)⁻¹ = C_D⁻¹ − C_D⁻¹K̃ M_CD⁻¹ K̃ᵀ C_D⁻¹
+  where M_CD = I + K̃ᵀ C_D⁻¹ K̃   (old M = σ²I+K̃ᵀK̃ = σ² M_CD for scalar case)
+  solve(d, noise_cov, *, noise_std=None)  O(N_q²) once + O(N_d·N_q) per call
+    f = C_D⁻¹d;  v = K̃ᵀf;  z = M_CD⁻¹v;  return f − C_D⁻¹(K̃√w z)
+  reconstruct(d, noise_cov, *, noise_std=None) → Function3D: m̂(x)=∑_i q_i k_i(x)
+  compute_sola_matrix(T, noise_cov, *, noise_std=None)
+    → X[N_p,N_d] = K̃_T M_CD⁻¹ K̃_Gᵀ C_D⁻¹  (chunked over N_d)
+  _ensure_model_cho(noise_cov)  — lazy cache keyed by _model_noise_key (hashable)
+  _noise_cov_key(noise_cov) → ('scalar', float) | ('diag', bytes) | ('dense', bytes)
+  noise_std= keyword deprecated everywhere → DeprecationWarning; use noise_cov=
         │
         ▼
 pygeoinf.LinearOperator           (Phase 5)
@@ -2097,6 +2205,22 @@ GaussianMeasure.affine_mapping(operator=A)   (pygeoinf built-in)
   prior x ~ N(μ, C) on Lebesgue3D
   data  y ~ N(Aμ, A C A*)  on EuclideanSpace(m)
 ```
+
+### Key Design Decisions (generalised noise covariance)
+
+**Three noise_cov forms:**
+- `float σ` → scalar noise std dev; `C_D = σ²I`; backward-compatible with old `noise_std` scalar API.
+- `1D ndarray (N_d,)` σᵢ → per-datum std devs; `C_D = diag(σᵢ²)`; stored as `cd_inv_diag = 1/σᵢ²`.
+- `2D ndarray (N_d, N_d)` SPD matrix → full data covariance; stored as `cho_factor(C_D)`; **requires K to be cached** (raises `RuntimeError` with message mentioning `memory_budget_bytes` otherwise).
+
+**Why M_CD ≠ old M?**
+Old formula: `M = σ²I + K̃ᵀK̃`. New formula: `M_CD = I + K̃ᵀC_D⁻¹K̃ = M/σ²` (for scalar case). This normalization makes the Woodbury identity work cleanly for all three C_D forms without splitting into cases at the solve level.
+
+**Cache key design:**
+The Cholesky-cached `M_CD` is invalidated whenever `noise_cov` changes. The `_noise_cov_key()` module-level function returns a hashable tuple: `('scalar', float)`, `('diag', bytes)` (the 1D array raw bytes), or `('dense', bytes)` (the 2D array raw bytes). This supports safe re-use across many solve/reconstruct calls with the same noise model without recomputing the Cholesky.
+
+**Backward compatibility:**
+All public push-through methods (`solve`, `reconstruct`, `compute_sola_matrix`, `resolve`) accept a `noise_std=` keyword-only argument that emits a `DeprecationWarning` and redirects to `noise_cov`. Float `noise_cov` retains identical semantics to old `noise_std` (std dev, not variance). Positional call sites (e.g. `solver.solve(d, 0.1)`) work unchanged with zero warnings.
 
 ### Key Design Decisions (Phase 5)
 

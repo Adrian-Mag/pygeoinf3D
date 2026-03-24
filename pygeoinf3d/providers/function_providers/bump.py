@@ -216,6 +216,37 @@ class BumpProvider3D(FunctionProvider3D):
             name=f"bump_{i}",
         )
 
+    def evaluate_batch(self, i_start: int, i_end: int, points: np.ndarray) -> np.ndarray:
+        """Vectorized evaluation of bumps ``i_start:i_end`` at *points*.
+
+        Parameters
+        ----------
+        i_start, i_end : int
+            Half-open row range ``[i_start, i_end)``.
+        points : ndarray of shape ``(n_pts, 3)``
+
+        Returns
+        -------
+        ndarray of shape ``(i_end - i_start, n_pts)``
+        """
+        points = np.asarray(points, dtype=float)                           # (n_pts, 3)
+        c = self._centers[i_start:i_end]                                   # (B, 3)
+        hw = self._widths[i_start:i_end] * 0.5                             # (B, 3)
+        k = self._k
+        # (B, n_pts, 3) scaled displacement
+        t = (points[np.newaxis, :, :] - c[:, np.newaxis, :]) / hw[:, np.newaxis, :]
+        inside = np.all(np.abs(t) < 1.0, axis=2)                          # (B, n_pts)
+        # Build safe denominator: use 1.0 for outside points to avoid 0-denom
+        safe_denom = np.where(inside[:, :, np.newaxis], 1.0 - t * t, 1.0)  # (B, n_pts, 3)
+        exp_each = np.exp(-k * t * t / safe_denom)                         # (B, n_pts, 3)
+        raw_product = np.prod(exp_each, axis=2)                            # (B, n_pts)
+        result = np.where(inside, raw_product, 0.0)                        # (B, n_pts)
+        if self._normalized:
+            norm1d = _bump1d_integral(k)
+            C = 1.0 / (norm1d ** 3 * hw[:, 0] * hw[:, 1] * hw[:, 2])     # (B,)
+            result = C[:, np.newaxis] * result
+        return result
+
     def __repr__(self) -> str:
         return (
             f"BumpProvider3D(dim={self.dim}, k={self._k}, "

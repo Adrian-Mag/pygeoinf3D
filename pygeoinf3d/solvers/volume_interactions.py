@@ -32,6 +32,37 @@ import numpy as np
 from pygeoinf3d.providers.base import FunctionProvider3D
 
 
+class _NoiseCovModel:
+    r"""Helper for applying :math:`C_D^{-1}` in push-through identity solves.
+
+    Encapsulates the three cases for the data noise covariance:
+
+    * **scalar** (case 1): :math:`C_D = \sigma^2 I`
+    * **diagonal** (case 2): :math:`C_D = \mathrm{diag}(\sigma_i^2)`
+    * **dense SPD** (case 3): full :math:`C_D` factorised via Cholesky
+
+    Parameters
+    ----------
+    cd_inv_diag : ndarray or None
+        Array broadcast for :math:`C_D^{-1} d = d \odot \text{cd\_inv\_diag}`
+        (cases 1 and 2).  ``None`` for dense case.
+    cd_cho : tuple or None
+        Cholesky factorisation from :func:`scipy.linalg.cho_factor` (case 3).
+        ``None`` for scalar/diagonal case.
+    """
+
+    def __init__(self, cd_inv_diag, cd_cho):
+        self._cd_inv_diag = cd_inv_diag  # 1/σᵢ² per datum, or None
+        self._cd_cho = cd_cho            # cho_factor(C_D), or None
+
+    def apply_inv(self, d: np.ndarray) -> np.ndarray:
+        r"""Compute :math:`C_D^{-1} d`."""
+        if self._cd_inv_diag is not None:
+            return d * self._cd_inv_diag
+        from scipy.linalg import cho_solve
+        return cho_solve(self._cd_cho, d)
+
+
 class VolumeInteractionBackend:
     r"""Assembles and caches volumetric kernel evaluations on a structured
     quadrature mesh.
@@ -90,6 +121,7 @@ class VolumeInteractionBackend:
         provider: FunctionProvider3D,
         resolution: Union[int, Tuple[int, int, int]],
         location: str = "cell_centers",
+        cache_k: bool = True,
     ) -> None:
         self._domain = domain
         self._provider = provider
@@ -102,7 +134,10 @@ class VolumeInteractionBackend:
         self._weights = domain.volume_weights(resolution, location=location)
 
         # Interaction matrix cache — populated lazily on first access.
+        # When cache_k=False the matrix is recomputed on every call (streaming mode).
         self._K_cache: Optional[np.ndarray] = None
+        self._cache_k: bool = cache_k
+        self._no_cache_warned: bool = False
 
     # ------------------------------------------------------------------
     # Public API
@@ -114,11 +149,27 @@ class VolumeInteractionBackend:
         Returns
         -------
         ndarray of shape ``(n_kernels, n_pts)``
-            :math:`K_{ij} = f_i(\\mathbf{x}_j)`.  Computed once and cached.
+            :math:`K_{ij} = f_i(\\mathbf{x}_j)`.  Computed once and cached
+            (unless *cache_k* was set to ``False`` at construction time).
         """
-        if self._K_cache is None:
-            self._K_cache = self._provider.evaluate_all(self._pts)
-        return self._K_cache
+        if self._K_cache is not None:
+            return self._K_cache
+        K = self._provider.evaluate_all(self._pts)
+        if self._cache_k:
+            self._K_cache = K
+        else:
+            if not self._no_cache_warned:
+                import warnings
+                warnings.warn(
+                    f"VolumeInteractionBackend: K matrix "
+                    f"({self._provider.dim} × {len(self._weights)} float64) "
+                    f"is not cached (memory budget exceeded). "
+                    f"Each call to interaction_matrix() re-evaluates all kernels.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                self._no_cache_warned = True
+        return K
 
     def gram(self) -> np.ndarray:
         r"""Compute the Gram matrix :math:`G = K\,\mathrm{diag}(w)\,K^\top`.
@@ -178,3 +229,184 @@ class VolumeInteractionBackend:
         K_other = other.interaction_matrix()
         w = self._weights
         return K_self @ (w[:, np.newaxis] * K_other.T)
+
+    # ------------------------------------------------------------------
+    # Chunked / memory-efficient operations for push-through identity
+    # ------------------------------------------------------------------
+
+    def _default_chunk_size(self, memory_budget_bytes: int = 256 * 1024 ** 2) -> int:
+        """Rows of K to process at once, limited by memory budget."""
+        N_q = len(self._weights)
+        row_bytes = N_q * 8  # float64
+        return max(1, memory_budget_bytes // row_bytes)
+
+    def build_model_gram(
+        self,
+        noise_cov,
+        chunk_size: Optional[int] = None,
+    ) -> tuple:
+        r"""Build the model-space Gram matrix :math:`M_{CD} = I + \tilde{K}^\top C_D^{-1} \tilde{K}`.
+
+        Here :math:`\tilde{K} = K\,\mathrm{diag}(\sqrt{w})`.
+
+        Parameters
+        ----------
+        noise_cov : float, or ndarray of shape ``(N_d,)``, or ndarray of shape ``(N_d, N_d)``
+            Defines the data noise covariance :math:`C_D`:
+
+            * **float** — :math:`C_D = \sigma^2 I` where :math:`\sigma =` ``noise_cov``
+              (standard deviation).
+            * **1-D array** — :math:`C_D = \mathrm{diag}(\sigma_i^2)` where
+              :math:`\sigma_i =` ``noise_cov[i]`` (per-datum standard deviations).
+            * **2-D array** — dense SPD matrix :math:`C_D =` ``noise_cov``.
+              Requires the interaction matrix :math:`K` to be cached
+              (``memory_budget_bytes`` must be sufficient).
+
+        chunk_size : int or None
+            Rows of :math:`K` to process per iteration (cases 1 and 2 only).
+            Defaults to a memory-limited value from :meth:`_default_chunk_size`.
+
+        Returns
+        -------
+        M_CD : ndarray of shape ``(N_q, N_q)``
+            :math:`M_{CD} = I + \tilde{K}^\top C_D^{-1} \tilde{K}`.
+        cho_M_CD : object
+            Scipy Cholesky factorisation of :math:`M_{CD}`
+            (from :func:`scipy.linalg.cho_factor`).
+        noise_model : _NoiseCovModel
+            Helper for applying :math:`C_D^{-1}`.
+
+        Raises
+        ------
+        ValueError
+            If ``noise_cov`` is a 1-D array with length ≠ ``N_d``.
+        RuntimeError
+            If ``noise_cov`` is a 2-D array but :math:`K` is not cached.
+        """
+        from scipy.linalg import cho_factor
+        N_q = len(self._weights)
+        sqrt_w = np.sqrt(self._weights)
+        noise_cov_arr = np.asarray(noise_cov, dtype=float)
+        N_d = self._provider.dim
+        pts = self._pts
+
+        M_CD = np.eye(N_q)
+        B = chunk_size if chunk_size is not None else self._default_chunk_size()
+
+        if noise_cov_arr.ndim == 0:
+            # Case 1: scalar std dev σ → C_D = σ²I, C_D^{-1} = (1/σ²)I
+            sigma = float(noise_cov_arr)
+            inv_var = 1.0 / sigma ** 2
+            cd_inv_diag = np.full(N_d, inv_var)
+            for i in range(0, N_d, B):
+                j = min(i + B, N_d)
+                K_chunk = self._provider.evaluate_batch(i, j, pts)  # (b, N_q)
+                Kw_chunk = K_chunk * sqrt_w[None, :]                # (b, N_q)
+                M_CD += inv_var * (Kw_chunk.T @ Kw_chunk)
+            return M_CD, cho_factor(M_CD), _NoiseCovModel(cd_inv_diag, None)
+
+        elif noise_cov_arr.ndim == 1:
+            # Case 2: per-datum std devs σ_i → C_D = diag(σ_i²)
+            if len(noise_cov_arr) != N_d:
+                raise ValueError(
+                    f"noise_cov 1-D array must have length N_d={N_d}, "
+                    f"got {len(noise_cov_arr)}."
+                )
+            inv_var = 1.0 / noise_cov_arr ** 2          # shape (N_d,)
+            for i in range(0, N_d, B):
+                j = min(i + B, N_d)
+                K_chunk = self._provider.evaluate_batch(i, j, pts)  # (b, N_q)
+                Kw_chunk = K_chunk * sqrt_w[None, :]                # (b, N_q)
+                # K̃^T diag(inv_var[i:j]) K̃  chunk contribution
+                M_CD += (Kw_chunk * inv_var[i:j, None]).T @ Kw_chunk
+            return M_CD, cho_factor(M_CD), _NoiseCovModel(inv_var, None)
+
+        elif noise_cov_arr.ndim == 2:
+            # Case 3: dense SPD C_D — requires K to be cached
+            if self._K_cache is None:
+                raise RuntimeError(
+                    "build_model_gram with a 2-D noise_cov (dense C_D) requires "
+                    "the interaction matrix K to be cached. Set "
+                    "memory_budget_bytes >= "
+                    f"{N_d * N_q * 8} bytes."
+                )
+            from scipy.linalg import cho_factor as _cf, cho_solve as _cs
+            cd_cho = _cf(noise_cov_arr)
+            K = self._K_cache                             # (N_d, N_q)
+            Kw = K * sqrt_w[None, :]                      # (N_d, N_q) = K̃
+            CdinvKw = _cs(cd_cho, Kw)                     # C_D^{-1} K̃, (N_d, N_q)
+            M_CD += Kw.T @ CdinvKw                        # (N_q, N_q)
+            return M_CD, cho_factor(M_CD), _NoiseCovModel(None, cd_cho)
+
+        else:
+            raise ValueError(
+                "noise_cov must be a scalar, 1-D array (per-datum std devs), "
+                "or 2-D array (full C_D matrix)."
+            )
+
+
+    def normal_vector(
+        self,
+        d: np.ndarray,
+        chunk_size: Optional[int] = None,
+    ) -> np.ndarray:
+        r"""Compute :math:`\tilde{K}^\top d = \sqrt{w} \odot (K^\top d)`, shape ``(N_q,)``.
+
+        Uses the cached interaction matrix when available; otherwise streams
+        in chunks to avoid materialising the full ``K``.
+
+        Parameters
+        ----------
+        d : array_like of shape ``(N_d,)``
+        chunk_size : int or None
+
+        Returns
+        -------
+        ndarray of shape ``(N_q,)``
+        """
+        d = np.asarray(d, dtype=float).ravel()
+        sqrt_w = np.sqrt(self._weights)
+        if self._K_cache is not None:
+            return sqrt_w * (self._K_cache.T @ d)
+        N_q = len(self._weights)
+        B = chunk_size if chunk_size is not None else self._default_chunk_size()
+        result = np.zeros(N_q)
+        N_d = self._provider.dim
+        pts = self._pts
+        for i in range(0, N_d, B):
+            j = min(i + B, N_d)
+            K_chunk = self._provider.evaluate_batch(i, j, pts)  # (b, N_q)
+            result += K_chunk.T @ d[i:j]
+        return sqrt_w * result
+
+    def kernel_matvec(
+        self,
+        v: np.ndarray,
+        chunk_size: Optional[int] = None,
+    ) -> np.ndarray:
+        r"""Compute :math:`K v`, shape ``(N_d,)``, where *v* has shape ``(N_q,)``.
+
+        Uses the cached interaction matrix when available; otherwise streams
+        in chunks.
+
+        Parameters
+        ----------
+        v : array_like of shape ``(N_q,)``
+        chunk_size : int or None
+
+        Returns
+        -------
+        ndarray of shape ``(N_d,)``
+        """
+        v = np.asarray(v, dtype=float).ravel()
+        if self._K_cache is not None:
+            return self._K_cache @ v
+        B = chunk_size if chunk_size is not None else self._default_chunk_size()
+        N_d = self._provider.dim
+        result = np.zeros(N_d)
+        pts = self._pts
+        for i in range(0, N_d, B):
+            j = min(i + B, N_d)
+            K_chunk = self._provider.evaluate_batch(i, j, pts)  # (b, N_q)
+            result[i:j] = K_chunk @ v
+        return result

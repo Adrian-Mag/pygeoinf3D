@@ -278,3 +278,454 @@ class TestSolverRouterDenseVolumeSola:
         router = SolverRouter()
         rec = router.recommend(lebesgue_space, sola_forms, provider=gaussian_provider)
         assert isinstance(rec.reason, str) and len(rec.reason) > 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 Tests: Push-through identity methods
+# ---------------------------------------------------------------------------
+
+class TestPushThroughSolve:
+    """Tests for DenseVolumeSolaSolver.solve (push-through identity)."""
+
+    @pytest.fixture
+    def noise_std(self):
+        return 0.1
+
+    def _old_solve(self, solver, d, noise_std):
+        """Reference: data-space Cholesky solve."""
+        from scipy.linalg import cho_factor, cho_solve as sp_cho_solve
+        K = solver.backend.interaction_matrix()
+        w = solver.backend._weights
+        N_d = K.shape[0]
+        GGT = K @ (w[:, None] * K.T)
+        sys = GGT + noise_std**2 * np.eye(N_d)
+        return sp_cho_solve(cho_factor(sys), d)
+
+    def test_solve_matches_data_space_cholesky(self, sola_solver, noise_std):
+        """push-through solve == data-space Cholesky solve."""
+        rng = np.random.default_rng(42)
+        N_d = sola_solver.n_kernels
+        d = rng.standard_normal(N_d)
+        q_new = sola_solver.solve(d, noise_std)
+        q_old = self._old_solve(sola_solver, d, noise_std)
+        npt.assert_allclose(q_new, q_old, rtol=1e-8)
+
+    def test_solve_multiple_rhs_consistent(self, sola_solver, noise_std):
+        """Solve three different RHS vectors, each matches old pipeline."""
+        rng = np.random.default_rng(7)
+        N_d = sola_solver.n_kernels
+        for _ in range(3):
+            d = rng.standard_normal(N_d)
+            q_new = sola_solver.solve(d, noise_std)
+            q_old = self._old_solve(sola_solver, d, noise_std)
+            npt.assert_allclose(q_new, q_old, rtol=1e-8)
+
+    def test_solve_caches_model_cho(self, sola_solver, noise_std):
+        """Second solve with same noise_std reuses cached Cholesky."""
+        rng = np.random.default_rng(99)
+        d = rng.standard_normal(sola_solver.n_kernels)
+        sola_solver.solve(d, noise_std)
+        cho_ref = sola_solver._model_M_cho
+        sola_solver.solve(d * 0.5, noise_std)  # same noise_std
+        assert sola_solver._model_M_cho is cho_ref  # same object
+
+    def test_solve_invalidates_cache_on_noise_change(self, sola_solver):
+        """Changing noise_std rebuilds the cache."""
+        rng = np.random.default_rng(55)
+        d = rng.standard_normal(sola_solver.n_kernels)
+        sola_solver.solve(d, 0.1)
+        cho_ref = sola_solver._model_M_cho
+        sola_solver.solve(d, 0.2)
+        assert sola_solver._model_M_cho is not cho_ref
+
+
+class TestReconstruct:
+    """Tests for DenseVolumeSolaSolver.reconstruct."""
+
+    def test_returns_function3d(self, unit_box, sola_solver, lebesgue_space):
+        rng = np.random.default_rng(17)
+        d = rng.standard_normal(sola_solver.n_kernels)
+        fn = sola_solver.reconstruct(d, 0.1)
+        from pygeoinf3d import Function3D
+        assert isinstance(fn, Function3D)
+
+    def test_reconstruct_callable_at_single_point(self, unit_box, sola_solver):
+        rng = np.random.default_rng(31)
+        d = rng.standard_normal(sola_solver.n_kernels)
+        fn = sola_solver.reconstruct(d, 0.1)
+        val = fn(np.array([[0.5, 0.5, 0.5]]))
+        assert np.isfinite(val).all()
+
+    def test_reconstruct_matches_explicit_sum_of_kernels(self, unit_box, gaussian_provider, sola_solver):
+        """fn(x) == sum_i q_i k_i(x)."""
+        rng = np.random.default_rng(44)
+        noise_std = 0.1
+        d = rng.standard_normal(sola_solver.n_kernels)
+        fn = sola_solver.reconstruct(d, noise_std)
+        q  = sola_solver.solve(d, noise_std)
+        pts = np.array([[0.2, 0.3, 0.4], [0.7, 0.8, 0.6]])
+        K_pts = gaussian_provider.evaluate_all(pts)  # (N_d, 2)
+        manual = K_pts.T @ q                          # (2,)
+        npt.assert_allclose(fn(pts), manual, rtol=1e-10)
+
+
+class TestComputeSolaMatrix:
+    """Tests for DenseVolumeSolaSolver.compute_sola_matrix."""
+
+    @pytest.fixture
+    def target_solver(self, unit_box):
+        """Small target solver (5 targets)."""
+        centers_T = np.array([
+            [0.2, 0.5, 0.5],
+            [0.4, 0.5, 0.5],
+            [0.5, 0.5, 0.5],
+            [0.6, 0.5, 0.5],
+            [0.8, 0.5, 0.5],
+        ])
+        from pygeoinf3d.providers.function_providers.gaussian import GaussianProvider3D
+        from pygeoinf3d.solvers.dense_volume_sola import DenseVolumeSolaSolver
+        prov_T = GaussianProvider3D(unit_box, centers_T, sigmas=0.2)
+        return DenseVolumeSolaSolver(unit_box, prov_T, resolution=(4, 4, 4))
+
+    def test_shape(self, sola_solver, target_solver):
+        X = sola_solver.compute_sola_matrix(target_solver, 0.1)
+        N_p = target_solver.n_kernels
+        N_d = sola_solver.n_kernels
+        assert X.shape == (N_p, N_d)
+
+    def test_matches_old_pipeline(self, unit_box, sola_solver, target_solver, lebesgue_space):
+        """X @ d should match T_op(G_inv(d)) via old data-space Cholesky pipeline."""
+        noise_std = 0.1
+        K_G = sola_solver.backend.interaction_matrix()                                # (N_d, N_q)
+        # Evaluate target kernels at the forward solver's quadrature pts (same N_q)
+        K_T = target_solver.backend._provider.evaluate_all(sola_solver.backend._pts) # (N_p, N_q)
+        w   = sola_solver.backend._weights                                            # (N_q,)
+        N_d = K_G.shape[0]
+
+        # Old pipeline: data-space Cholesky
+        from scipy.linalg import cho_factor, cho_solve as sp_cho
+        GGT = K_G @ (w[:, None] * K_G.T)                  # (N_d, N_d)
+        sys = GGT + noise_std**2 * np.eye(N_d)
+        cho_old = cho_factor(sys)
+
+        # X = K_T @ diag(w) @ K_G^T @ (GGT + sigma^2 I)^{-1}
+        TGT = K_T @ (w[:, None] * K_G.T)                  # (N_p, N_d)
+        import numpy.linalg as nla
+        X_old = TGT @ nla.inv(sys)                         # (N_p, N_d)
+
+        X_new = sola_solver.compute_sola_matrix(target_solver, noise_std)
+        npt.assert_allclose(X_new, X_old, rtol=1e-8)
+
+    def test_chunked_equals_full(self, sola_solver, target_solver):
+        """Chunked assembly gives same result as full."""
+        # Reset cache to ensure fresh computation
+        sola_solver._model_M_cho = None
+        noise_std = 0.05
+        X_full   = sola_solver.compute_sola_matrix(target_solver, noise_std, chunk_size=100)
+        sola_solver._model_M_cho = None
+        X_chunk1 = sola_solver.compute_sola_matrix(target_solver, noise_std, chunk_size=1)
+        npt.assert_allclose(X_chunk1, X_full, rtol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 Tests: Memory-limited K caching, updated resolve, forward warning
+# ---------------------------------------------------------------------------
+
+class TestMemoryBudgetAndLazyK:
+    """Tests for memory-budget-controlled K caching."""
+
+    def test_k_cached_by_default(self, unit_box, gaussian_provider):
+        """Default solver caches K."""
+        solver = DenseVolumeSolaSolver(unit_box, gaussian_provider, resolution=(4, 4, 4))
+        _ = solver.backend.interaction_matrix()
+        assert solver.backend._K_cache is not None
+
+    def test_k_not_cached_when_budget_exceeded(self, unit_box, gaussian_provider):
+        """With memory_budget_bytes=1, K is never cached."""
+        solver = DenseVolumeSolaSolver(
+            unit_box, gaussian_provider, resolution=(4, 4, 4),
+            memory_budget_bytes=1,
+        )
+        assert not solver._k_fits_in_memory
+        assert solver.backend._cache_k is False
+
+    def test_k_cache_none_when_budget_exceeded(self, unit_box, gaussian_provider):
+        """When budget exceeded, _K_cache stays None even after interaction_matrix()."""
+        solver = DenseVolumeSolaSolver(
+            unit_box, gaussian_provider, resolution=(4, 4, 4),
+            memory_budget_bytes=1,
+        )
+        _ = solver.backend.interaction_matrix()
+        assert solver.backend._K_cache is None
+
+    def test_solve_works_without_k_cache(self, unit_box, gaussian_provider):
+        """solve() still works correctly when K is not cached."""
+        solver_cached = DenseVolumeSolaSolver(unit_box, gaussian_provider, resolution=(4, 4, 4))
+        solver_streaming = DenseVolumeSolaSolver(
+            unit_box, gaussian_provider, resolution=(4, 4, 4), memory_budget_bytes=1
+        )
+        rng = np.random.default_rng(42)
+        d = rng.standard_normal(solver_cached.n_kernels)
+        q_c = solver_cached.solve(d, 0.1)
+        q_s = solver_streaming.solve(d, 0.1)
+        npt.assert_allclose(q_s, q_c, rtol=1e-8)
+
+    def test_no_cache_triggers_warning(self, unit_box, gaussian_provider):
+        """interaction_matrix() warns once when cache_k=False."""
+        import warnings
+        solver = DenseVolumeSolaSolver(
+            unit_box, gaussian_provider, resolution=(4, 4, 4),
+            memory_budget_bytes=1,
+        )
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            solver.backend.interaction_matrix()
+            assert any(issubclass(x.category, UserWarning) for x in w)
+
+    def test_no_cache_warning_issued_only_once(self, unit_box, gaussian_provider):
+        """The no-cache warning is issued only on the first call."""
+        import warnings
+        solver = DenseVolumeSolaSolver(
+            unit_box, gaussian_provider, resolution=(4, 4, 4),
+            memory_budget_bytes=1,
+        )
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            solver.backend.interaction_matrix()
+            solver.backend.interaction_matrix()
+            user_warnings = [x for x in w if issubclass(x.category, UserWarning)]
+            assert len(user_warnings) == 1
+
+
+class TestResolveUpdated:
+    """Tests for updated resolve() with noise_std parameter."""
+
+    def test_resolve_with_noise_std_matches_solve(self, unit_box, gaussian_provider):
+        """resolve(target_row, noise_std) == solve(K@(w*target), noise_std)."""
+        solver = DenseVolumeSolaSolver(unit_box, gaussian_provider, resolution=(4, 4, 4))
+        K = solver.backend.interaction_matrix()
+        w = solver.backend._weights
+        rng = np.random.default_rng(5)
+        target = rng.standard_normal(K.shape[1])  # N_q vector
+        noise_std = 0.1
+
+        c_t = solver.backend.kernel_matvec(w * target)
+        q_solve = solver.solve(c_t, noise_std)
+        q_resolve = solver.resolve(target, noise_cov=noise_std)
+        npt.assert_allclose(q_resolve, q_solve, rtol=1e-10)
+
+    def test_resolve_legacy_without_noise_warns(self, unit_box, gaussian_provider):
+        """resolve(target) without noise_std issues DeprecationWarning."""
+        import warnings
+        solver = DenseVolumeSolaSolver(unit_box, gaussian_provider, resolution=(4, 4, 4))
+        K = solver.backend.interaction_matrix()
+        target = K[0, :]  # any row
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            solver.resolve(target)
+            assert any(issubclass(x.category, DeprecationWarning) for x in w)
+
+    def test_resolve_no_noise_no_cache_raises(self, unit_box, gaussian_provider):
+        """resolve(target) without noise_std raises when K budget exceeded (no _cho)."""
+        solver = DenseVolumeSolaSolver(
+            unit_box, gaussian_provider, resolution=(4, 4, 4), memory_budget_bytes=1
+        )
+        K_row = solver.backend._provider.get_function(0)(solver.backend._pts)
+        with pytest.raises(RuntimeError, match="noise_std"):
+            solver.resolve(K_row)
+
+    def test_resolve_with_noise_works_without_k_cache(self, unit_box, gaussian_provider):
+        """resolve(target, noise_std) works even when K is not cached."""
+        solver_cached = DenseVolumeSolaSolver(unit_box, gaussian_provider, resolution=(4, 4, 4))
+        solver_streaming = DenseVolumeSolaSolver(
+            unit_box, gaussian_provider, resolution=(4, 4, 4), memory_budget_bytes=1
+        )
+        K = solver_cached.backend.interaction_matrix()
+        w = solver_cached.backend._weights
+        target = K[1, :]
+        noise_std = 0.1
+        q_cached = solver_cached.resolve(target, noise_cov=noise_std)
+        q_stream = solver_streaming.resolve(target, noise_cov=noise_std)
+        npt.assert_allclose(q_stream, q_cached, rtol=1e-8)
+
+
+class TestForwardOperatorWarning:
+    """forward_operator() warns when K not cached."""
+
+    def test_warns_when_no_cache(self, unit_box, gaussian_provider, lebesgue_space):
+        import warnings
+        solver = DenseVolumeSolaSolver(
+            unit_box, gaussian_provider, resolution=(4, 4, 4), memory_budget_bytes=1
+        )
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            solver.forward_operator(lebesgue_space)
+            assert any(
+                issubclass(x.category, UserWarning) and "K matrix is not cached" in str(x.message)
+                for x in w
+            )
+
+    def test_no_warning_when_cached(self, unit_box, gaussian_provider, lebesgue_space):
+        import warnings
+        solver = DenseVolumeSolaSolver(unit_box, gaussian_provider, resolution=(4, 4, 4))
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            solver.forward_operator(lebesgue_space)
+            assert not any(
+                issubclass(x.category, UserWarning) and "K matrix is not cached" in str(x.message)
+                for x in w
+            )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 Tests: Generalised noise covariance (noise_cov parameter)
+# ---------------------------------------------------------------------------
+
+class TestGeneralNoiseCov:
+    """Tests for generalised C_D support (float, 1-D, and 2-D noise_cov)."""
+
+    # ------------------------------------------------------------------ #
+    # Helper: brute-force (C_D + GG*)^{-1} d                              #
+    # ------------------------------------------------------------------ #
+    def _brute_solve(self, solver, d, C_D_mat):
+        K = solver.backend.interaction_matrix()
+        w = solver.backend._weights
+        GGstar = K @ (w[:, None] * K.T)
+        return np.linalg.solve(C_D_mat + GGstar, d)
+
+    # ------------------------------------------------------------------ #
+    # solve                                                                #
+    # ------------------------------------------------------------------ #
+
+    def test_scalar_solve_matches_brute_force(self, unit_box, gaussian_provider):
+        """solve(d, sigma_float) == brute-force (σ²I + GG*)^{-1} d."""
+        solver = DenseVolumeSolaSolver(unit_box, gaussian_provider, resolution=(4, 4, 4))
+        rng = np.random.default_rng(7)
+        N_d = solver.n_kernels
+        d = rng.standard_normal(N_d)
+        sigma = 0.1
+        q = solver.solve(d, sigma)
+        C_D = sigma ** 2 * np.eye(N_d)
+        q_brute = self._brute_solve(solver, d, C_D)
+        npt.assert_allclose(q, q_brute, rtol=1e-8)
+
+    def test_diagonal_uniform_equals_scalar(self, unit_box, gaussian_provider):
+        """solve(d, uniform_diag) == solve(d, scalar) when diag is uniform."""
+        solver = DenseVolumeSolaSolver(unit_box, gaussian_provider, resolution=(4, 4, 4))
+        rng = np.random.default_rng(8)
+        d = rng.standard_normal(solver.n_kernels)
+        sigma = 0.1
+        q_scalar = solver.solve(d, sigma)
+        q_diag = solver.solve(d, np.full(solver.n_kernels, sigma))
+        npt.assert_allclose(q_diag, q_scalar, rtol=1e-10)
+
+    def test_diagonal_non_uniform_correct(self, unit_box, gaussian_provider):
+        """solve(d, per-datum sigmas) matches brute force."""
+        solver = DenseVolumeSolaSolver(unit_box, gaussian_provider, resolution=(4, 4, 4))
+        rng = np.random.default_rng(10)
+        N_d = solver.n_kernels
+        d = rng.standard_normal(N_d)
+        sigmas = rng.uniform(0.05, 0.3, size=N_d)
+        q_diag = solver.solve(d, sigmas)
+        C_D_mat = np.diag(sigmas ** 2)
+        q_brute = self._brute_solve(solver, d, C_D_mat)
+        npt.assert_allclose(q_diag, q_brute, rtol=1e-8)
+
+    def test_dense_scaled_identity_equals_scalar(self, unit_box, gaussian_provider):
+        """solve(d, σ²I) == solve(d, σ) for dense C_D = σ²I."""
+        solver = DenseVolumeSolaSolver(unit_box, gaussian_provider, resolution=(4, 4, 4))
+        rng = np.random.default_rng(9)
+        N_d = solver.n_kernels
+        d = rng.standard_normal(N_d)
+        sigma = 0.1
+        C_D = sigma ** 2 * np.eye(N_d)
+        q_scalar = solver.solve(d, sigma)
+        q_dense = solver.solve(d, C_D)
+        npt.assert_allclose(q_dense, q_scalar, rtol=1e-8)
+
+    def test_dense_non_trivial_correct(self, unit_box, gaussian_provider):
+        """solve(d, non-trivial SPD C_D) matches brute force."""
+        solver = DenseVolumeSolaSolver(unit_box, gaussian_provider, resolution=(4, 4, 4))
+        rng = np.random.default_rng(11)
+        N_d = solver.n_kernels
+        d = rng.standard_normal(N_d)
+        A = rng.standard_normal((N_d, N_d))
+        C_D = A @ A.T + 0.5 * np.eye(N_d)
+        q_dense = solver.solve(d, C_D)
+        q_brute = self._brute_solve(solver, d, C_D)
+        npt.assert_allclose(q_dense, q_brute, rtol=1e-6)
+
+    def test_dense_requires_k_cached(self, unit_box, gaussian_provider):
+        """Dense C_D raises RuntimeError when K not cached."""
+        solver = DenseVolumeSolaSolver(
+            unit_box, gaussian_provider, resolution=(4, 4, 4), memory_budget_bytes=1
+        )
+        N_d = solver.n_kernels
+        C_D = np.eye(N_d)
+        d = np.ones(N_d)
+        with pytest.raises(RuntimeError, match="memory_budget_bytes"):
+            solver.solve(d, C_D)
+
+    # ------------------------------------------------------------------ #
+    # compute_sola_matrix                                                  #
+    # ------------------------------------------------------------------ #
+
+    @pytest.fixture
+    def small_target_solver(self, unit_box):
+        centers = np.array([[0.3, 0.5, 0.5], [0.7, 0.5, 0.5]])
+        from pygeoinf3d.providers.function_providers.gaussian import GaussianProvider3D
+        prov = GaussianProvider3D(unit_box, centers, sigmas=0.2)
+        return DenseVolumeSolaSolver(unit_box, prov, resolution=(4, 4, 4))
+
+    def test_compute_sola_matrix_diagonal_uniform_equals_scalar(
+        self, unit_box, gaussian_provider, small_target_solver
+    ):
+        """compute_sola_matrix uniform diagonal == scalar."""
+        solver = DenseVolumeSolaSolver(unit_box, gaussian_provider, resolution=(4, 4, 4))
+        sigma = 0.1
+        X_scalar = solver.compute_sola_matrix(small_target_solver, sigma)
+        X_diag = solver.compute_sola_matrix(
+            small_target_solver, np.full(solver.n_kernels, sigma)
+        )
+        npt.assert_allclose(X_diag, X_scalar, rtol=1e-10)
+
+    def test_compute_sola_matrix_dense_scaled_identity_equals_scalar(
+        self, unit_box, gaussian_provider, small_target_solver
+    ):
+        """compute_sola_matrix with σ²I == scalar."""
+        solver = DenseVolumeSolaSolver(unit_box, gaussian_provider, resolution=(4, 4, 4))
+        sigma = 0.1
+        N_d = solver.n_kernels
+        C_D = sigma ** 2 * np.eye(N_d)
+        X_scalar = solver.compute_sola_matrix(small_target_solver, sigma)
+        X_dense = solver.compute_sola_matrix(small_target_solver, C_D)
+        npt.assert_allclose(X_dense, X_scalar, rtol=1e-8)
+
+    # ------------------------------------------------------------------ #
+    # Backward compatibility shim                                          #
+    # ------------------------------------------------------------------ #
+
+    def test_noise_std_kwarg_deprecated_in_solve(self, unit_box, gaussian_provider):
+        """solve(d, noise_std=0.1) issues DeprecationWarning."""
+        import warnings
+        solver = DenseVolumeSolaSolver(unit_box, gaussian_provider, resolution=(4, 4, 4))
+        d = np.ones(solver.n_kernels)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            solver.solve(d, noise_std=0.1)
+            assert any(
+                issubclass(x.category, DeprecationWarning) and "noise_std" in str(x.message)
+                for x in w
+            )
+
+    def test_noise_std_kwarg_gives_same_result(self, unit_box, gaussian_provider):
+        """solve(d, noise_std=σ) == solve(d, σ) (same float value, same semantics)."""
+        import warnings
+        solver = DenseVolumeSolaSolver(unit_box, gaussian_provider, resolution=(4, 4, 4))
+        rng = np.random.default_rng(42)
+        d = rng.standard_normal(solver.n_kernels)
+        q_new = solver.solve(d, 0.1)
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            q_old = solver.solve(d, noise_std=0.1)
+        npt.assert_allclose(q_new, q_old, rtol=1e-12)

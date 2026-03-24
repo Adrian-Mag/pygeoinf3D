@@ -199,3 +199,209 @@ class TestVolumeInteractionBackend:
         )
         with pytest.raises(ValueError):
             backend_a.cross_gram(backend_coarse)
+
+
+# ---------------------------------------------------------------------------
+# Test 3: evaluate_batch
+# ---------------------------------------------------------------------------
+
+class TestEvaluateBatch:
+    """Tests for FunctionProvider3D.evaluate_batch."""
+
+    def test_gaussian_evaluate_batch_matches_evaluate_all(
+        self, unit_box, small_gaussian_provider, small_backend
+    ):
+        pts = small_backend._pts
+        K_all = small_gaussian_provider.evaluate_all(pts)
+        K_batch = small_gaussian_provider.evaluate_batch(
+            0, small_gaussian_provider.dim, pts
+        )
+        npt.assert_allclose(K_batch, K_all, rtol=1e-12)
+
+    def test_gaussian_evaluate_batch_slice_matches_row(
+        self, unit_box, small_gaussian_provider, small_backend
+    ):
+        pts = small_backend._pts
+        K_all = small_gaussian_provider.evaluate_all(pts)
+        K_batch = small_gaussian_provider.evaluate_batch(1, 2, pts)
+        npt.assert_allclose(K_batch, K_all[1:2], rtol=1e-12)
+
+    def test_base_class_evaluate_batch_fallback(self, unit_box):
+        """The _LinearMockProvider uses the default loop-based evaluate_all."""
+        mock_provider = _LinearMockProvider(unit_box, n=3)
+        pts = unit_box.structured_mesh((4, 4, 4), location="cell_centers")
+        K_all = mock_provider.evaluate_all(pts)
+        K_batch = mock_provider.evaluate_batch(0, mock_provider.dim, pts)
+        npt.assert_allclose(K_batch, K_all, rtol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# Test 4: build_model_gram
+# ---------------------------------------------------------------------------
+
+class TestBuildModelGram:
+    """Tests for VolumeInteractionBackend.build_model_gram."""
+
+    def test_matches_explicit_gram(self, small_backend):
+        """M_CD = I + K̃^T K̃ / σ² should match explicit computation."""
+        noise_std = 0.1
+        K = small_backend.interaction_matrix()
+        w = small_backend._weights
+        sqrt_w = np.sqrt(w)
+        Kw = K * sqrt_w[None, :]  # (N_d, N_q)
+        N_q = len(w)
+        M_expected = np.eye(N_q) + (Kw.T @ Kw) / noise_std ** 2
+        M, cho, noise_model = small_backend.build_model_gram(noise_std)
+        npt.assert_allclose(M, M_expected, rtol=1e-10)
+        # noise_model should give correct C_D^{-1}: d / σ²
+        d_test = np.ones(small_backend._provider.dim)
+        npt.assert_allclose(noise_model.apply_inv(d_test), d_test / noise_std ** 2, rtol=1e-12)
+
+    def test_chunked_equals_full(self, small_backend):
+        """chunk_size=1, chunk_size=2, chunk_size=N_d all agree."""
+        noise_std = 0.05
+        M_full, _, _ = small_backend.build_model_gram(noise_std, chunk_size=100)
+        M_chunk1, _, _ = small_backend.build_model_gram(noise_std, chunk_size=1)
+        M_chunk2, _, _ = small_backend.build_model_gram(noise_std, chunk_size=2)
+        npt.assert_allclose(M_chunk1, M_full, rtol=1e-10)
+        npt.assert_allclose(M_chunk2, M_full, rtol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Test 5: normal_vector and kernel_matvec
+# ---------------------------------------------------------------------------
+
+class TestNormalVectorAndKernelMatvec:
+    """Tests for normal_vector and kernel_matvec."""
+
+    def test_normal_vector_matches_explicit(self, small_backend):
+        """K̃^T d = sqrt(w) * K^T d."""
+        K = small_backend.interaction_matrix()
+        w = small_backend._weights
+        sqrt_w = np.sqrt(w)
+        rng = np.random.default_rng(42)
+        d = rng.standard_normal(small_backend._provider.dim)
+        expected = sqrt_w * (K.T @ d)
+        result = small_backend.normal_vector(d)
+        npt.assert_allclose(result, expected, rtol=1e-10)
+
+    def test_normal_vector_chunked_equals_cached(self, small_backend):
+        """Chunked path (after clearing K cache) gives same result."""
+        K = small_backend.interaction_matrix()   # warm up cache
+        rng = np.random.default_rng(7)
+        d = rng.standard_normal(small_backend._provider.dim)
+        result_cached = small_backend.normal_vector(d)
+        # Force chunked path by temporarily hiding cache
+        original_cache = small_backend._K_cache
+        small_backend._K_cache = None
+        result_chunked = small_backend.normal_vector(d, chunk_size=1)
+        small_backend._K_cache = original_cache
+        npt.assert_allclose(result_chunked, result_cached, rtol=1e-10)
+
+    def test_kernel_matvec_matches_explicit(self, small_backend):
+        """K v should match explicit K @ v."""
+        K = small_backend.interaction_matrix()
+        rng = np.random.default_rng(99)
+        v = rng.standard_normal(K.shape[1])
+        expected = K @ v
+        result = small_backend.kernel_matvec(v)
+        npt.assert_allclose(result, expected, rtol=1e-10)
+
+    def test_kernel_matvec_chunked_equals_cached(self, small_backend):
+        """Chunked path gives same result."""
+        K = small_backend.interaction_matrix()
+        rng = np.random.default_rng(13)
+        v = rng.standard_normal(K.shape[1])
+        result_cached = small_backend.kernel_matvec(v)
+        original_cache = small_backend._K_cache
+        small_backend._K_cache = None
+        result_chunked = small_backend.kernel_matvec(v, chunk_size=1)
+        small_backend._K_cache = original_cache
+        npt.assert_allclose(result_chunked, result_cached, rtol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Test 6: build_model_gram — generalised noise covariance
+# ---------------------------------------------------------------------------
+
+class TestBuildModelGramGeneralNoise:
+    """Tests for build_model_gram with scalar, 1-D, and 2-D noise_cov."""
+
+    def test_scalar_m_cd_formula(self, small_backend):
+        """M_CD = I + K̃^T K̃ / σ² for scalar noise_cov = σ (std dev)."""
+        sigma = 0.1
+        K = small_backend.interaction_matrix()
+        w = small_backend._weights
+        sqrt_w = np.sqrt(w)
+        Kw = K * sqrt_w[None, :]
+        N_q = len(w)
+        M_expected = np.eye(N_q) + (Kw.T @ Kw) / sigma ** 2
+        M, cho, noise_model = small_backend.build_model_gram(sigma)
+        npt.assert_allclose(M, M_expected, rtol=1e-10)
+
+    def test_scalar_noise_model_applies_inv_correctly(self, small_backend):
+        """noise_model.apply_inv(d) == d / σ² for scalar noise_cov."""
+        sigma = 0.1
+        rng = np.random.default_rng(42)
+        d = rng.standard_normal(small_backend._provider.dim)
+        _, _, noise_model = small_backend.build_model_gram(sigma)
+        npt.assert_allclose(noise_model.apply_inv(d), d / sigma ** 2, rtol=1e-12)
+
+    def test_diagonal_m_cd_matches_scalar_when_uniform(self, small_backend):
+        """build_model_gram with uniform 1-D noise == scalar version."""
+        sigma = 0.1
+        N_d = small_backend._provider.dim
+        M_scalar, _, _ = small_backend.build_model_gram(sigma)
+        M_diag, _, _ = small_backend.build_model_gram(np.full(N_d, sigma))
+        npt.assert_allclose(M_diag, M_scalar, rtol=1e-10)
+
+    def test_diagonal_wrong_length_raises(self, small_backend):
+        """1-D noise_cov with wrong length raises ValueError."""
+        with pytest.raises(ValueError, match="N_d"):
+            small_backend.build_model_gram(np.array([0.1, 0.2]))
+
+    def test_diagonal_noise_model_applies_inv_correctly(self, small_backend):
+        """noise_model.apply_inv(d) == d / σ_i² for per-datum noise."""
+        N_d = small_backend._provider.dim
+        rng = np.random.default_rng(7)
+        sigmas = rng.uniform(0.05, 0.3, size=N_d)
+        d = rng.standard_normal(N_d)
+        _, _, noise_model = small_backend.build_model_gram(sigmas)
+        npt.assert_allclose(noise_model.apply_inv(d), d / sigmas ** 2, rtol=1e-12)
+
+    def test_dense_m_cd_matches_scalar_when_cd_is_scaled_identity(self, small_backend):
+        """build_model_gram with σ²I (dense) == scalar version."""
+        sigma = 0.1
+        N_d = small_backend._provider.dim
+        C_D = sigma ** 2 * np.eye(N_d)
+        # Ensure K is cached
+        _ = small_backend.interaction_matrix()
+        M_scalar, _, _ = small_backend.build_model_gram(sigma)
+        M_dense, _, _ = small_backend.build_model_gram(C_D)
+        npt.assert_allclose(M_dense, M_scalar, rtol=1e-8)
+
+    def test_dense_requires_k_cached(self, unit_box, small_gaussian_provider):
+        """Dense noise_cov raises RuntimeError when K not cached."""
+        backend = VolumeInteractionBackend(
+            unit_box, small_gaussian_provider, resolution=(4, 4, 4), cache_k=False
+        )
+        N_d = small_gaussian_provider.dim
+        C_D = np.eye(N_d)
+        with pytest.raises(RuntimeError, match="cached"):
+            backend.build_model_gram(C_D)
+
+    def test_scalar_chunked_equals_full(self, small_backend):
+        """Chunked == full for scalar noise_cov."""
+        sigma = 0.05
+        M_full, _, _ = small_backend.build_model_gram(sigma, chunk_size=100)
+        M_c1, _, _ = small_backend.build_model_gram(sigma, chunk_size=1)
+        npt.assert_allclose(M_c1, M_full, rtol=1e-10)
+
+    def test_diagonal_chunked_equals_full(self, small_backend):
+        """Chunked == full for 1-D noise_cov."""
+        N_d = small_backend._provider.dim
+        rng = np.random.default_rng(99)
+        sigmas = rng.uniform(0.05, 0.3, size=N_d)
+        M_full, _, _ = small_backend.build_model_gram(sigmas, chunk_size=100)
+        M_c1, _, _ = small_backend.build_model_gram(sigmas, chunk_size=1)
+        npt.assert_allclose(M_c1, M_full, rtol=1e-10)

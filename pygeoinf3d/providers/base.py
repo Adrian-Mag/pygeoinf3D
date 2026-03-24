@@ -71,6 +71,23 @@ class FunctionProvider3D(ABC):
         rows = [self.get_function(i)(points) for i in range(self.dim)]
         return np.vstack(rows)
 
+    def evaluate_batch(self, i_start: int, i_end: int, points: np.ndarray) -> np.ndarray:
+        """Evaluate functions ``i_start:i_end`` at the given points.
+
+        Parameters
+        ----------
+        i_start, i_end : int
+            Half-open row range ``[i_start, i_end)``.
+        points : ndarray of shape ``(n_pts, 3)``
+
+        Returns
+        -------
+        ndarray of shape ``(i_end - i_start, n_pts)``
+            Default implementation calls :meth:`evaluate_all` and slices rows.
+            Subclasses should override for efficiency.
+        """
+        return self.evaluate_all(points)[i_start:i_end]
+
 
 class KernelProvider3D(ABC):
     """Abstract base for objects that produce kernels on demand.

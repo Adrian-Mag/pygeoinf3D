@@ -161,6 +161,31 @@ class BoxcarProvider3D(FunctionProvider3D):
             name=f"boxcar_{i}",
         )
 
+    def evaluate_batch(self, i_start: int, i_end: int, points: np.ndarray) -> np.ndarray:
+        """Vectorized evaluation of box-cars ``i_start:i_end`` at *points*.
+
+        Parameters
+        ----------
+        i_start, i_end : int
+            Half-open row range ``[i_start, i_end)``.
+        points : ndarray of shape ``(n_pts, 3)``
+
+        Returns
+        -------
+        ndarray of shape ``(i_end - i_start, n_pts)``
+        """
+        points = np.asarray(points, dtype=float)              # (n_pts, 3)
+        c = self._centers[i_start:i_end]                      # (B, 3)
+        hw = self._widths[i_start:i_end] * 0.5                # (B, 3) half-widths
+        d = points[np.newaxis, :, :] - c[:, np.newaxis, :]   # (B, n_pts, 3)
+        inside = np.all(np.abs(d) <= hw[:, np.newaxis, :], axis=2)  # (B, n_pts)
+        if self._normalized:
+            w = self._widths[i_start:i_end]
+            h = 1.0 / (w[:, 0] * w[:, 1] * w[:, 2])          # (B,)
+        else:
+            h = np.ones(i_end - i_start)
+        return h[:, np.newaxis] * inside.astype(float)        # (B, n_pts)
+
     def __repr__(self) -> str:
         return (
             f"BoxcarProvider3D(dim={self.dim}, "

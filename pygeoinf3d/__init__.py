@@ -23,7 +23,10 @@ from .providers.base import (
     FunctionToKernelAdapter,
     KernelProvider3D,
 )
-from .providers.tensor_product import BoxLaplacianSpectrumProvider, TensorProductProvider
+from .providers.tensor_product import (
+    BoxLaplacianSpectrumProvider,
+    TensorProductProvider,
+)
 from .operators.base import SpectralOperator3D
 from .operators.spectral_power_base import SpectralPowerBase3D
 from .operators.laplacian_box import BoxLaplacian
@@ -36,13 +39,23 @@ from .operators.sola import SOLAOperator3D
 
 # Solver registry — Phase 1 of solver-compatibility-framework
 # Solver router — Phase 2 of solver-compatibility-framework
-from .solvers import SpectralGramSolver, SolverSpec, SolverRegistry, SOLVER_REGISTRY, SolverRouter, SolverRecommendation
+from .solvers import (
+    SOLVER_REGISTRY,
+    SolverRecommendation,
+    SolverRegistry,
+    SolverRouter,
+    SolverSpec,
+    SpectralGramSolver,
+)
 
 # Sampling — KL expansion sampler for Gaussian measures
 from .sampling import KLSampler3D
 
-# Visualization — interactive path viewer
-from .plot import plot_paths3d_interactive
+# Visualization — interactive path viewer + multi-panel dropdown-slider viewer
+from .plot import (
+    compare_panels_axis_dropdown_sliders,
+    plot_paths3d_interactive,
+)
 
 # Lebesgue coefficient architecture Phase 1 — representation boundary
 # Lebesgue coefficient architecture Phase 2 — Gram-aware backends
@@ -97,6 +110,7 @@ __all__ = [
     "KLSampler3D",
     # Visualization helpers
     "plot_paths3d_interactive",
+    "compare_panels_axis_dropdown_sliders",
     # Phase 4 — Representation boundary
     "CoefficientRepresentation3D",
     "LebesgueRepresentation3D",

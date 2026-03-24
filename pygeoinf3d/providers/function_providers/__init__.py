@@ -35,10 +35,12 @@ from pygeoinf3d.providers.base import FunctionProvider3D
 from pygeoinf3d.providers.function_providers.gaussian import GaussianProvider3D
 from pygeoinf3d.providers.function_providers.bump import BumpProvider3D
 from pygeoinf3d.providers.function_providers.boxcar import BoxcarProvider3D
+from pygeoinf3d.providers.function_providers.normal_modes import NormalModesProvider3D
 
 __all__: list[str] = [
     "FunctionProvider3D",
     "GaussianProvider3D",
     "BumpProvider3D",
     "BoxcarProvider3D",
+    "NormalModesProvider3D",
 ]

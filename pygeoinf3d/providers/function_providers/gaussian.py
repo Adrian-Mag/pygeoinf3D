@@ -200,6 +200,30 @@ class GaussianProvider3D(FunctionProvider3D):
 
         return A[:, np.newaxis] * np.exp(exponent)  # (n_kernels, n_pts)
 
+    def evaluate_batch(self, i_start: int, i_end: int, points: np.ndarray) -> np.ndarray:
+        """Vectorized evaluation of Gaussians ``i_start:i_end`` at *points*.
+
+        Parameters
+        ----------
+        i_start, i_end : int
+            Half-open row range ``[i_start, i_end)``.
+        points : ndarray of shape ``(n_pts, 3)``
+
+        Returns
+        -------
+        ndarray of shape ``(i_end - i_start, n_pts)``
+        """
+        points = np.asarray(points, dtype=float)
+        c = self._centers[i_start:i_end]   # (B, 3)
+        s = self._sigmas[i_start:i_end]    # (B, 3)
+        d = points[np.newaxis, :, :] - c[:, np.newaxis, :]  # (B, n_pts, 3)
+        exponent = -0.5 * np.sum(d ** 2 / (s[:, np.newaxis, :] ** 2), axis=2)  # (B, n_pts)
+        if self._normalized:
+            A = 1.0 / (_SQRT_2PI ** 3 * s[:, 0] * s[:, 1] * s[:, 2])  # (B,)
+        else:
+            A = np.ones(len(c))
+        return A[:, np.newaxis] * np.exp(exponent)  # (B, n_pts)
+
     def __repr__(self) -> str:
         return (
             f"GaussianProvider3D(dim={self.dim}, "

@@ -20,6 +20,7 @@ from pygeoinf3d.providers.base import (
     KernelProvider3D,
 )
 from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
+from pygeoinf3d.providers.function_providers.normal_modes import NormalModesProvider3D
 from . import function_providers
 
 __all__ = [
@@ -27,5 +28,6 @@ __all__ = [
     "KernelProvider3D",
     "FunctionToKernelAdapter",
     "BoxLaplacianSpectrumProvider",
+    "NormalModesProvider3D",
     "function_providers",
 ]

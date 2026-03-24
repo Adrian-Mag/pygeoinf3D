@@ -16,6 +16,7 @@ from pygeoinf3d.plot import (
     plot_function3d_volume_dropdown,
     plot_function3d_isosurface,
     compare_function3d_axis_sliders,
+    compare_panels_axis_dropdown_sliders,
     plot_paths3d_interactive,
 )
 
@@ -550,7 +551,9 @@ def test_compare_function3d_axis_sliders_requires_plotly(
 def kl_sampler(box_domain):
     """KLSampler3D with tensor-product structure for fast-path testing."""
     from pygeoinf3d.spaces.lebesgue import Lebesgue3D
-    from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
+    from pygeoinf3d.providers.tensor_product import (
+        BoxLaplacianSpectrumProvider,
+    )
     from pygeoinf3d.operators.inverse_laplacian_box import InverseBoxLaplacian
     from pygeoinf3d.sampling import KLSampler3D
 
@@ -590,18 +593,24 @@ def test_kl_sample_from_xis_has_fast_path_attributes(kl_sampler):
 
 
 def test_kl_fast_grid_numerically_matches_generic_path(kl_sampler):
-    """Fast-path dispatch produces values numerically equivalent to generic path."""
+    """Fast-path dispatch matches the generic grid-evaluation path."""
     xis = np.random.default_rng(99).standard_normal(kl_sampler.n_modes)
     sample = kl_sampler.sample_from_xis(xis)
 
-    # Fast path (dispatched automatically because sample has _kl_fast_grid_evaluator)
-    _, _, _, vals_fast = evaluate_function3d_on_regular_grid(sample, resolution=5)
+    # Fast path dispatches automatically via _kl_fast_grid_evaluator.
+    _, _, _, vals_fast = evaluate_function3d_on_regular_grid(
+        sample,
+        resolution=5,
+    )
 
     # Generic path: wrap in a new Function3D without the fast-path attribute
     fn_generic = Function3D(
         sample.domain, evaluate_callable=lambda x: sample(x)
     )
-    _, _, _, vals_gen = evaluate_function3d_on_regular_grid(fn_generic, resolution=5)
+    _, _, _, vals_gen = evaluate_function3d_on_regular_grid(
+        fn_generic,
+        resolution=5,
+    )
 
     np.testing.assert_allclose(vals_fast, vals_gen, rtol=1e-10, atol=1e-12)
 
@@ -697,7 +706,7 @@ def test_axis_slider_uses_kl_fast_path(kl_sampler):
 
 
 def test_plot_n_modes_validation(kl_sampler, linear_function):
-    """plot_n_modes=0 or negative raises ValueError; None and valid ints are OK.
+    """Validate plot_n_modes for fast-path and generic Function3D inputs.
 
     Generic Function3D inputs silently ignore a valid plot_n_modes value
     rather than raising an error.
@@ -705,7 +714,11 @@ def test_plot_n_modes_validation(kl_sampler, linear_function):
     sample = kl_sampler.sample()
 
     with pytest.raises(ValueError, match="plot_n_modes"):
-        evaluate_function3d_on_regular_grid(sample, resolution=4, plot_n_modes=0)
+        evaluate_function3d_on_regular_grid(
+            sample,
+            resolution=4,
+            plot_n_modes=0,
+        )
 
     with pytest.raises(ValueError, match="plot_n_modes"):
         evaluate_function3d_on_axis_slice(
@@ -713,7 +726,11 @@ def test_plot_n_modes_validation(kl_sampler, linear_function):
         )
 
     # None is always valid (no error)
-    evaluate_function3d_on_regular_grid(sample, resolution=4, plot_n_modes=None)
+    evaluate_function3d_on_regular_grid(
+        sample,
+        resolution=4,
+        plot_n_modes=None,
+    )
 
     # Generic Function3D — valid plot_n_modes is silently ignored, no error,
     # and results are identical to omitting the argument
@@ -745,12 +762,15 @@ def test_plot_n_modes_changes_kl_sampling_budget_only_for_plotting(kl_sampler):
     sample = kl_sampler.sample_from_xis(xis)
 
     # Regular grid: plot_n_modes=1 should give different values than full
-    _, _, _, vals_full = evaluate_function3d_on_regular_grid(sample, resolution=5)
+    _, _, _, vals_full = evaluate_function3d_on_regular_grid(
+        sample,
+        resolution=5,
+    )
     _, _, _, vals_trunc = evaluate_function3d_on_regular_grid(
         sample, resolution=5, plot_n_modes=1
     )
     assert not np.allclose(vals_full, vals_trunc), (
-        "1-mode truncation should produce different values than full evaluation"
+        "1-mode truncation should differ from the full evaluation"
     )
 
     # Axis slice: same assertion
@@ -768,8 +788,14 @@ def test_plot_n_modes_changes_kl_sampling_budget_only_for_plotting(kl_sampler):
     assert kl_sampler.n_modes == n_full
 
     # The underlying Function3D still evaluates with all modes generically
-    fn_generic = Function3D(sample.domain, evaluate_callable=lambda x: sample(x))
-    _, _, _, vals_generic = evaluate_function3d_on_regular_grid(fn_generic, resolution=5)
+    fn_generic = Function3D(
+        sample.domain,
+        evaluate_callable=lambda x: sample(x),
+    )
+    _, _, _, vals_generic = evaluate_function3d_on_regular_grid(
+        fn_generic,
+        resolution=5,
+    )
     np.testing.assert_allclose(vals_full, vals_generic, rtol=1e-10, atol=1e-12)
 
 
@@ -779,11 +805,19 @@ def test_plot_n_modes_full_equals_default(kl_sampler):
     xis = np.random.default_rng(789).standard_normal(n_full)
     sample = kl_sampler.sample_from_xis(xis)
 
-    _, _, _, vals_default = evaluate_function3d_on_regular_grid(sample, resolution=4)
+    _, _, _, vals_default = evaluate_function3d_on_regular_grid(
+        sample,
+        resolution=4,
+    )
     _, _, _, vals_capped = evaluate_function3d_on_regular_grid(
         sample, resolution=4, plot_n_modes=n_full
     )
-    np.testing.assert_allclose(vals_capped, vals_default, rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(
+        vals_capped,
+        vals_default,
+        rtol=1e-12,
+        atol=1e-14,
+    )
 
     _, _, vals_s_default = evaluate_function3d_on_axis_slice(
         sample, axis='z', coord=0.5, resolution=4
@@ -791,11 +825,16 @@ def test_plot_n_modes_full_equals_default(kl_sampler):
     _, _, vals_s_capped = evaluate_function3d_on_axis_slice(
         sample, axis='z', coord=0.5, resolution=4, plot_n_modes=n_full
     )
-    np.testing.assert_allclose(vals_s_capped, vals_s_default, rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(
+        vals_s_capped,
+        vals_s_default,
+        rtol=1e-12,
+        atol=1e-14,
+    )
 
 
 def test_plot_n_modes_threaded_through_volume_dropdown(kl_sampler):
-    """plot_n_modes flows from plot_function3d_volume_dropdown to the fast path."""
+    """plot_n_modes flows from volume dropdown plotting to the fast path."""
     pytest.importorskip("plotly.graph_objects")
     sample = kl_sampler.sample()
 
@@ -807,7 +846,12 @@ def test_plot_n_modes_threaded_through_volume_dropdown(kl_sampler):
         return original(resolution, plot_n_modes)
 
     sample._kl_fast_grid_evaluator = tracked
-    plot_function3d_volume_dropdown([sample], resolution=4, plot_n_modes=2, show_plot=False)
+    plot_function3d_volume_dropdown(
+        [sample],
+        resolution=4,
+        plot_n_modes=2,
+        show_plot=False,
+    )
 
     assert received == [2]
 
@@ -825,7 +869,12 @@ def test_plot_n_modes_threaded_through_isosurface(kl_sampler):
         return original(resolution, plot_n_modes)
 
     sample._kl_fast_grid_evaluator = tracked
-    plot_function3d_isosurface(sample, resolution=4, plot_n_modes=2, show_plot=False)
+    plot_function3d_isosurface(
+        sample,
+        resolution=4,
+        plot_n_modes=2,
+        show_plot=False,
+    )
 
     assert received == [2]
 
@@ -844,7 +893,12 @@ def test_plot_n_modes_threaded_through_axis_slider(kl_sampler):
 
     sample._kl_fast_slice_evaluator = tracked
     plot_function3d_axis_slider(
-        sample, axis='z', n_slices=3, resolution=4, plot_n_modes=2, show_plot=False
+        sample,
+        axis='z',
+        n_slices=3,
+        resolution=4,
+        plot_n_modes=2,
+        show_plot=False,
     )
 
     assert len(received) == 3
@@ -1011,5 +1065,303 @@ def test_plot_paths3d_interactive_non_path3d_element(straight_path):
     with pytest.raises(ValueError, match="Path3D instance"):
         plot_paths3d_interactive(
             [straight_path, "not_a_path"],
+            show_plot=False,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Tests for compare_panels_axis_dropdown_sliders
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def two_panel_functions(two_functions):
+    """Two panels, each with 2 candidate functions."""
+    return [
+        [two_functions[0], two_functions[1]],
+        [two_functions[1], two_functions[0]],
+    ]
+
+
+def test_compare_panels_axis_dropdown_sliders_smoke(two_panel_functions):
+    """Smoke test: figure, slider, dropdowns, traces, and frames."""
+    go = pytest.importorskip("plotly.graph_objects")
+
+    fig = cast(Any, compare_panels_axis_dropdown_sliders(
+        two_panel_functions,
+        axis='z',
+        n_slices=3,
+        resolution=4,
+        show_plot=False,
+    ))
+
+    assert isinstance(fig, go.Figure)
+    # One shared slider
+    assert len(fig.layout.sliders) == 1
+    assert fig.layout.sliders[0].currentvalue.prefix == 'z = '
+    # One dropdown per panel (2 panels)
+    assert len(fig.layout.updatemenus) == 2
+    # Total traces: 2 functions in panel 0 + 2 in panel 1 = 4
+    assert len(fig.data) == 4
+    # Initial visibility: first function in each panel visible
+    assert fig.data[0].visible is True
+    assert fig.data[1].visible is False
+    assert fig.data[2].visible is True
+    assert fig.data[3].visible is False
+    # Correct number of frames
+    assert len(fig.frames) == 3
+
+
+def test_compare_panels_axis_dropdown_sliders_frames(two_panel_functions):
+    """Each frame updates all traces across all panels."""
+    pytest.importorskip("plotly.graph_objects")
+
+    fig = cast(Any, compare_panels_axis_dropdown_sliders(
+        two_panel_functions,
+        axis='z',
+        n_slices=4,
+        resolution=3,
+        show_plot=False,
+    ))
+
+    assert len(fig.frames) == 4
+    n_total_traces = len(fig.data)  # 4
+    for frame in fig.frames:
+        assert len(frame.data) == n_total_traces
+        assert sorted(frame.traces) == list(range(n_total_traces))
+
+
+def test_compare_panels_axis_dropdown_sliders_dropdown_isolation(
+    two_panel_functions,
+):
+    """Each panel's dropdown targets only its own trace group."""
+    pytest.importorskip("plotly.graph_objects")
+
+    fig = cast(Any, compare_panels_axis_dropdown_sliders(
+        two_panel_functions,
+        axis='z',
+        n_slices=3,
+        resolution=4,
+        show_plot=False,
+    ))
+
+    # Panel 0 has traces [0, 1], panel 1 has traces [2, 3]
+    panel0_dropdown = fig.layout.updatemenus[0]
+    panel1_dropdown = fig.layout.updatemenus[1]
+
+    # Both dropdowns use restyle so they do not interfere with each other.
+    for btn in panel0_dropdown.buttons:
+        assert btn.method == 'restyle'
+        # Second arg is the trace index list — must be only panel 0's traces
+        assert set(btn.args[1]) == {0, 1}
+
+    for btn in panel1_dropdown.buttons:
+        assert btn.method == 'restyle'
+        assert set(btn.args[1]) == {2, 3}
+
+
+def test_compare_panels_axis_dropdown_sliders_per_panel_color(box_domain):
+    """Each panel keeps its own colour scale for different magnitudes."""
+    pytest.importorskip("plotly.graph_objects")
+
+    def f1(x):
+        x = np.asarray(x)
+        return x[0] if x.ndim == 1 else x[:, 0]  # range [0, 1]
+
+    def f2(x):
+        x = np.asarray(x)
+        v = x[0] if x.ndim == 1 else x[:, 0]
+        return 100.0 * v  # range [0, 100]
+
+    fn1 = Function3D(box_domain, evaluate_callable=f1)
+    fn2 = Function3D(box_domain, evaluate_callable=f2)
+    panel_fns = [[fn1], [fn2]]
+
+    fig = cast(Any, compare_panels_axis_dropdown_sliders(
+        panel_fns,
+        axis='z',
+        n_slices=3,
+        resolution=4,
+        show_plot=False,
+    ))
+
+    # Panel 0 = trace 0, Panel 1 = trace 1
+    assert fig.data[1].zmax > 10 * fig.data[0].zmax, (
+        "Panel with f2 should have a much larger zmax than panel with f1"
+    )
+
+
+def test_compare_panels_axis_dropdown_sliders_global_vmin_vmax(
+    two_panel_functions,
+):
+    """Explicit vmin/vmax locks all traces to the same colour scale."""
+    pytest.importorskip("plotly.graph_objects")
+
+    fig = cast(Any, compare_panels_axis_dropdown_sliders(
+        two_panel_functions,
+        axis='z',
+        n_slices=3,
+        resolution=4,
+        show_plot=False,
+        vmin=-2.0,
+        vmax=2.0,
+    ))
+
+    for trace in fig.data:
+        assert trace.zmin == -2.0
+        assert trace.zmax == 2.0
+
+
+def test_compare_panels_axis_dropdown_sliders_custom_labels(
+    two_panel_functions,
+):
+    """Custom panel_labels appear as button labels in the correct dropdown."""
+    pytest.importorskip("plotly.graph_objects")
+
+    labels = [["Alpha", "Beta"], ["Gamma", "Delta"]]
+    fig = cast(Any, compare_panels_axis_dropdown_sliders(
+        two_panel_functions,
+        axis='z',
+        n_slices=2,
+        resolution=3,
+        show_plot=False,
+        panel_labels=labels,
+    ))
+
+    p0_btn_labels = [btn.label for btn in fig.layout.updatemenus[0].buttons]
+    p1_btn_labels = [btn.label for btn in fig.layout.updatemenus[1].buttons]
+    assert p0_btn_labels == ["Alpha", "Beta"]
+    assert p1_btn_labels == ["Gamma", "Delta"]
+
+
+def test_compare_panels_axis_dropdown_sliders_single_panel(two_functions):
+    """A single panel with multiple functions: 1 dropdown, 1 slider."""
+    go = pytest.importorskip("plotly.graph_objects")
+
+    fig = cast(Any, compare_panels_axis_dropdown_sliders(
+        [two_functions],
+        axis='x',
+        n_slices=3,
+        resolution=4,
+        show_plot=False,
+    ))
+
+    assert isinstance(fig, go.Figure)
+    assert len(fig.layout.sliders) == 1
+    assert len(fig.layout.updatemenus) == 1
+    assert len(fig.data) == 2
+    assert len(fig.frames) == 3
+
+
+def test_compare_panels_axis_dropdown_sliders_validation_empty():
+    """Empty panel_functions list raises ValueError."""
+    with pytest.raises(ValueError, match="non-empty"):
+        compare_panels_axis_dropdown_sliders([], show_plot=False)
+
+
+def test_compare_panels_axis_dropdown_sliders_validation_empty_panel(
+    box_domain,
+):
+    """A panel with no functions raises ValueError."""
+    def f(x):
+        x = np.asarray(x)
+        return x[0] if x.ndim == 1 else x[:, 0]
+
+    fn = Function3D(box_domain, evaluate_callable=f)
+    with pytest.raises(ValueError, match="empty"):
+        compare_panels_axis_dropdown_sliders([[fn], []], show_plot=False)
+
+
+def test_compare_panels_axis_dropdown_sliders_labels_outer_mismatch(
+    two_panel_functions,
+):
+    """panel_labels outer length != n_panels raises ValueError."""
+    pytest.importorskip("plotly.graph_objects")
+
+    with pytest.raises(ValueError, match="same length"):
+        compare_panels_axis_dropdown_sliders(
+            two_panel_functions,
+            panel_labels=[["A", "B"]],  # 1 panel labels for 2 panels
+            n_slices=2,
+            resolution=3,
+            show_plot=False,
+        )
+
+
+def test_compare_panels_axis_dropdown_sliders_labels_inner_mismatch(
+    two_panel_functions,
+):
+    """panel_labels inner length != panel function count raises ValueError."""
+    pytest.importorskip("plotly.graph_objects")
+
+    with pytest.raises(ValueError, match="same length"):
+        compare_panels_axis_dropdown_sliders(
+            two_panel_functions,
+            panel_labels=[
+                ["A", "B", "C"],
+                ["X", "Y"],
+            ],  # panel 0 has 3 labels, but 2 functions
+            n_slices=2,
+            resolution=3,
+            show_plot=False,
+        )
+
+
+def test_compare_panels_axis_dropdown_sliders_validation_bbox_mismatch(
+    box_domain,
+):
+    """Functions with different bounding boxes raise ValueError."""
+    pytest.importorskip("plotly.graph_objects")
+
+    other_domain = BoxDomain(
+        np.array([0.0, 0.0, 0.0]),
+        np.array([2.0, 2.0, 2.0]),
+    )
+
+    def f(x):
+        x = np.asarray(x)
+        return x[0] if x.ndim == 1 else x[:, 0]
+
+    fn1 = Function3D(box_domain, evaluate_callable=f)
+    fn2 = Function3D(other_domain, evaluate_callable=f)
+
+    with pytest.raises(ValueError, match="bounding box"):
+        compare_panels_axis_dropdown_sliders(
+            [[fn1], [fn2]],
+            n_slices=2,
+            resolution=3,
+            show_plot=False,
+        )
+
+
+def test_compare_panels_axis_dropdown_sliders_validation_panel_titles_mismatch(
+    two_panel_functions,
+):
+    """panel_titles with the wrong length raises ValueError early."""
+    with pytest.raises(ValueError, match="panel_titles"):
+        compare_panels_axis_dropdown_sliders(
+            two_panel_functions,
+            panel_titles=["Only one title"],  # 2 panels but 1 title
+            n_slices=2,
+            resolution=3,
+            show_plot=False,
+        )
+
+
+def test_compare_panels_axis_dropdown_sliders_requires_plotly(
+    two_panel_functions, monkeypatch
+):
+    """ImportError propagates when Plotly is not available."""
+    def _raise_import_error():
+        raise ImportError("plotly missing")
+
+    monkeypatch.setattr(
+        plot_module,
+        "_import_plotly_graph_objects",
+        _raise_import_error,
+    )
+
+    with pytest.raises(ImportError, match="plotly missing"):
+        plot_module.compare_panels_axis_dropdown_sliders(
+            two_panel_functions,
             show_plot=False,
         )

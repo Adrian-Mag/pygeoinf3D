@@ -1,0 +1,8 @@
+DenseVolumeSolaSolver benchmark
+resolution=(15, 15, 15)  sigma=0.05  noise_std=0.1
+memory_budget=0.5 GB
+
+     N_d |   Build(s) |   Solve(s) |  Peak RAM(MB) |     Residual
+---------+------------+------------+---------------+--------------
+     100 |      0.058 |     0.5350 |          86.9 |     6.87e-12
+     500 |      0.170 |     0.6362 |          86.9 |     3.00e-11
