@@ -149,7 +149,9 @@ pygeoinf3D/
 │   ├── noisy_path_form_least_norm_inversion_demo.ipynb  # Full pipeline demo: 10 random boundary-to-top path-integral measurements on Sobolev3D model space, 3-Gaussian true model, noisy data (σ≈0.005), minimum-norm inversion via data-space branch (undamped), slice/volume comparison of true vs recovered model.
 │   ├── kl_sampler_prior_demo.ipynb               # KL samples from InverseBoxLaplacian prior (spectral-kl plan)
 │   ├── generalized_laplacian_covariance_demo.ipynb  # KL samples from (-αΔ)^s covariance, s<0
-│   └── path_integral_minimum_norm_demo.py        # End-to-end path-integral minimum-norm inversion (Phase 5)
+│   ├── path_integral_minimum_norm_demo.py        # End-to-end path-integral minimum-norm inversion (Phase 5)
+│   ├── box/sola/sola_noise.ipynb                 # Full SOLA workflow: NormalModes kernels, property estimation, unimodularity, resolving vs target kernel viewer (uses compare_panels_axis_dropdown_sliders with 5-point diagonal preview)
+│   └── box/sola/sola_noise.py                    # Script companion to sola_noise.ipynb; saves the same figures, including unimodular estimate | 2σ and resolving-vs-target kernel comparison
 ├── pygeoinf3d/
 │   ├── __init__.py          # Re-exports all public API
 │   ├── plot.py              # Visualization (static slices + Plotly sliders + volume/isosurface helpers + plot_paths3d_interactive + compare_panels_axis_dropdown_sliders)
