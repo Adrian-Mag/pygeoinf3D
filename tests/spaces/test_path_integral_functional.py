@@ -629,3 +629,29 @@ class TestPathIntegralFunctionalCaching:
         scaled_ell = 2.0 * ell
         f = _sin_fn(dom)
         np.testing.assert_allclose(scaled_ell(f), 2.0 * ell(f), rtol=1e-14, atol=1e-14)
+
+    def test_quad_weights_shape_and_dot_matches_eval(self):
+        """quad_weights has shape (n_quad,) and dot(w, f(pts)) == ell(f)."""
+        dom, sobolev = _make_domain_and_sobolev()
+        path = _straight_path()
+        n_quad = 80
+        ell = PathIntegralFunctional(sobolev, path, n_quad=n_quad)
+
+        assert ell.quad_weights.shape == (n_quad,), \
+            "quad_weights must have shape (n_quad,)"
+
+        f = _sin_fn(dom)
+        via_dot = float(np.dot(ell.quad_weights, f(ell._pts)))
+        via_call = float(ell(f))
+        np.testing.assert_allclose(via_dot, via_call, rtol=1e-14, atol=1e-14)
+
+    def test_quad_weights_consistent_under_scaling(self):
+        """(a * form).quad_weights == a * form.quad_weights."""
+        dom, sobolev = _make_domain_and_sobolev()
+        path = _straight_path()
+        ell = PathIntegralFunctional(sobolev, path, n_quad=60)
+        a = 3.7
+        scaled = a * ell
+        np.testing.assert_allclose(
+            scaled.quad_weights, a * ell.quad_weights, rtol=1e-14, atol=1e-14
+        )

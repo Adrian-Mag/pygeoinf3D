@@ -469,7 +469,9 @@ class TestSOLAProviderBacked:
         codomain dimension.
         """
         from pygeoinf3d.providers.base import FunctionToKernelAdapter
-        from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
+        from pygeoinf3d.providers.tensor_product import (
+            BoxLaplacianSpectrumProvider,
+        )
 
         provider = BoxLaplacianSpectrumProvider(
             unit_box, truncation=2, bc_type='dirichlet'
@@ -894,3 +896,367 @@ class TestSOLAOperator3DWithPathFunctionals:
         lhs = space.inner_product(op.adjoint(y_vec), f)
         rhs = codomain.inner_product(y_vec, op(f))
         npt.assert_allclose(lhs, rhs, rtol=5e-3, atol=5e-3)
+
+
+# ---------------------------------------------------------------------------
+# build_path_cache fast-path tests
+# ---------------------------------------------------------------------------
+
+class TestSOLABuildPathCache:
+    """Tests for SOLAOperator3D.build_path_cache().
+
+    Covers:
+    - Correctness: cached forward matches uncached to machine precision.
+    - Flag: _path_cache_built is True after calling build_path_cache().
+    - TypeError: calling build_path_cache() when any form is not PathIntegralFunctional.
+    - ValueError: calling build_path_cache() when forms have different n_quad values.
+    """
+
+    @pytest.fixture
+    def sobolev_space(self, unit_box, space):
+        return _make_sobolev_from_lebesgue(space)
+
+    def _make_path_forms(self, unit_box, sobolev_space, N=4, n_quad=50):
+        """Return N PathIntegralFunctional forms on *sobolev_space*."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+        from pygeoinf3d.core.paths import Path3D
+
+        rng = np.random.default_rng(42)
+        srcs = rng.uniform(0.1, 0.9, size=(N, 3))
+        stas = rng.uniform(0.1, 0.9, size=(N, 3))
+        stas[:, 2] = 0.95  # keep stations near top face
+        paths = [
+            Path3D.from_polyline(np.array([srcs[i], stas[i]]))
+            for i in range(N)
+        ]
+        return [PathIntegralFunctional(sobolev_space, p, n_quad=n_quad) for p in paths]
+
+    def test_path_cache_correctness(self, unit_box, space, sobolev_space):
+        """Cached forward evaluation matches uncached to machine precision.
+
+        For N=6 path forms, build_path_cache() output must agree with the
+        sequential (uncached) forward pass to rtol=1e-10, atol=1e-14.
+        """
+        forms = self._make_path_forms(unit_box, sobolev_space, N=6, n_quad=80)
+        f = Function3D(
+            unit_box,
+            evaluate_callable=lambda x: np.exp(
+                -2.0 * np.sum(np.asarray(x) ** 2, axis=-1)
+            ),
+        )
+
+        codomain = EuclideanSpace(6)
+        G_slow = SOLAOperator3D(sobolev_space, codomain, forms)
+        G_fast = SOLAOperator3D(sobolev_space, codomain, forms)
+        G_fast.build_path_cache()
+
+        y_ref = G_slow(f)
+        y_cached = G_fast(f)
+
+        npt.assert_allclose(y_cached, y_ref, rtol=1e-10, atol=1e-14)
+
+    def test_path_cache_built_flag_set(self, unit_box, space, sobolev_space):
+        """_path_cache_built is False before and True after build_path_cache()."""
+        forms = self._make_path_forms(unit_box, sobolev_space, N=3)
+        codomain = EuclideanSpace(3)
+        op = SOLAOperator3D(sobolev_space, codomain, forms)
+
+        assert op._path_cache_built is False
+        op.build_path_cache()
+        assert op._path_cache_built is True
+
+    def test_path_cache_raises_type_error_for_volume_kernel(self, unit_box, space, sobolev_space):
+        """build_path_cache() raises TypeError when any form is a VolumeKernel3D."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+        from pygeoinf3d.core.paths import Path3D
+
+        path = Path3D.from_polyline(
+            np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        )
+        pif = PathIntegralFunctional(sobolev_space, path, n_quad=50)
+        vk = VolumeKernel3D(sobolev_space, const_fn(unit_box, 1.0))
+
+        codomain = EuclideanSpace(2)
+        op = SOLAOperator3D(sobolev_space, codomain, [pif, vk])
+
+        with pytest.raises(TypeError, match="PathIntegralFunctional"):
+            op.build_path_cache()
+
+    def test_path_cache_raises_value_error_for_mixed_n_quad(self, unit_box, space, sobolev_space):
+        """build_path_cache() raises ValueError when forms have different n_quad."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+        from pygeoinf3d.core.paths import Path3D
+
+        path_a = Path3D.from_polyline(
+            np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        )
+        path_b = Path3D.from_polyline(
+            np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        )
+        form_a = PathIntegralFunctional(sobolev_space, path_a, n_quad=50)
+        form_b = PathIntegralFunctional(sobolev_space, path_b, n_quad=100)
+
+        codomain = EuclideanSpace(2)
+        op = SOLAOperator3D(sobolev_space, codomain, [form_a, form_b])
+
+        with pytest.raises(ValueError, match="n_quad"):
+            op.build_path_cache()
+
+
+# ---------------------------------------------------------------------------
+# build_mixed_cache fast-path tests
+# ---------------------------------------------------------------------------
+
+class TestSOLABuildMixedCache:
+    """Tests for SOLAOperator3D.build_mixed_cache().
+
+    Covers:
+    - Correctness for a truly mixed stack (volume + path forms together).
+    - Works for all-volume stacks (same result as build_vol_cache).
+    - Works for all-path stacks (same result as build_path_cache).
+    - Flag: _mixed_cache_built is True after calling build_mixed_cache().
+    - TypeError: unknown form type in the stack.
+    - ValueError: path forms with non-uniform n_quad.
+    """
+
+    @pytest.fixture
+    def sobolev_space(self, unit_box, space):
+        return _make_sobolev_from_lebesgue(space)
+
+    def _make_vol_forms(self, unit_box, sobolev_space, N=3):
+        """Return N VolumeKernel3D forms on *sobolev_space*."""
+        centers = np.linspace(0.2, 0.8, N)
+        forms = []
+        for cx in centers:
+            c = float(cx)
+            forms.append(VolumeKernel3D(
+                sobolev_space,
+                Function3D(
+                    unit_box,
+                    evaluate_callable=lambda x, cx=c: np.exp(
+                        -20.0 * np.sum((np.asarray(x) - cx) ** 2, axis=-1)
+                    ),
+                ),
+            ))
+        return forms
+
+    def _make_path_forms(self, unit_box, sobolev_space, N=3, n_quad=60):
+        """Return N PathIntegralFunctional forms on *sobolev_space*."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+        from pygeoinf3d.core.paths import Path3D
+
+        rng = np.random.default_rng(7)
+        srcs = rng.uniform(0.1, 0.85, size=(N, 3))
+        stas = rng.uniform(0.1, 0.85, size=(N, 3))
+        paths = [
+            Path3D.from_polyline(np.array([srcs[i], stas[i]]))
+            for i in range(N)
+        ]
+        return [PathIntegralFunctional(sobolev_space, p, n_quad=n_quad) for p in paths]
+
+    def test_mixed_cache_correctness(self, unit_box, space, sobolev_space):
+        """Cached forward matches uncached for a mixed vol+path stack.
+
+        Uses 2 VolumeKernel3D + 3 PathIntegralFunctional forms interleaved
+        in original-order.  Results must agree to rtol=1e-10, atol=1e-14.
+        """
+        vol_forms = self._make_vol_forms(unit_box, sobolev_space, N=2)
+        path_forms = self._make_path_forms(unit_box, sobolev_space, N=3, n_quad=60)
+        # Interleave: vol[0], path[0], vol[1], path[1], path[2]
+        forms = [vol_forms[0], path_forms[0], vol_forms[1], path_forms[1], path_forms[2]]
+
+        f = Function3D(
+            unit_box,
+            evaluate_callable=lambda x: np.exp(
+                -3.0 * np.sum(np.asarray(x) ** 2, axis=-1)
+            ),
+        )
+        codomain = EuclideanSpace(5)
+        G_slow = SOLAOperator3D(sobolev_space, codomain, forms)
+        G_fast = SOLAOperator3D(sobolev_space, codomain, forms)
+        G_fast.build_mixed_cache(resolution=20)
+
+        npt.assert_allclose(G_fast(f), G_slow(f), rtol=1e-10, atol=1e-14)
+
+    def test_mixed_cache_flag_set(self, unit_box, space, sobolev_space):
+        """_mixed_cache_built starts False and is True after build_mixed_cache()."""
+        forms = self._make_vol_forms(unit_box, sobolev_space, N=2) + \
+                self._make_path_forms(unit_box, sobolev_space, N=2)
+        op = SOLAOperator3D(sobolev_space, EuclideanSpace(4), forms)
+        assert op._mixed_cache_built is False
+        op.build_mixed_cache()
+        assert op._mixed_cache_built is True
+
+    def test_mixed_cache_all_vol(self, unit_box, space, sobolev_space):
+        """build_mixed_cache works for all-volume stacks."""
+        forms = self._make_vol_forms(unit_box, sobolev_space, N=4)
+        f = Function3D(unit_box, evaluate_callable=lambda x: np.ones(len(x)))
+        codomain = EuclideanSpace(4)
+        G_slow = SOLAOperator3D(sobolev_space, codomain, forms)
+        G_fast = SOLAOperator3D(sobolev_space, codomain, forms)
+        G_fast.build_mixed_cache(resolution=20)
+        npt.assert_allclose(G_fast(f), G_slow(f), rtol=1e-8, atol=1e-12)
+
+    def test_mixed_cache_all_path(self, unit_box, space, sobolev_space):
+        """build_mixed_cache works for all-path stacks."""
+        forms = self._make_path_forms(unit_box, sobolev_space, N=4)
+        f = Function3D(
+            unit_box,
+            evaluate_callable=lambda x: np.exp(
+                -np.sum(np.asarray(x) ** 2, axis=-1)
+            ),
+        )
+        codomain = EuclideanSpace(4)
+        G_slow = SOLAOperator3D(sobolev_space, codomain, forms)
+        G_fast = SOLAOperator3D(sobolev_space, codomain, forms)
+        G_fast.build_mixed_cache()
+        npt.assert_allclose(G_fast(f), G_slow(f), rtol=1e-10, atol=1e-14)
+
+    def test_mixed_cache_raises_type_error_unknown_form(self, unit_box, space, sobolev_space):
+        """build_mixed_cache raises TypeError for any unsupported form type."""
+        from pygeoinf.linear_forms import LinearForm
+
+        class BogusForm(LinearForm):
+            def __init__(self, domain):
+                super().__init__(domain, mapping=lambda f: 0.0)
+
+        vol = self._make_vol_forms(unit_box, sobolev_space, N=1)[0]
+        bogus = BogusForm(sobolev_space)
+        op = SOLAOperator3D(sobolev_space, EuclideanSpace(2), [vol, bogus])
+        with pytest.raises(TypeError, match="build_mixed_cache"):
+            op.build_mixed_cache()
+
+    def test_mixed_cache_raises_value_error_nonuniform_path_n_quad(
+        self, unit_box, space, sobolev_space
+    ):
+        """build_mixed_cache raises ValueError when path forms have different n_quad."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+        from pygeoinf3d.core.paths import Path3D
+
+        path_a = Path3D.from_polyline(np.array([[0.1, 0.1, 0.1], [0.9, 0.1, 0.1]]))
+        path_b = Path3D.from_polyline(np.array([[0.1, 0.5, 0.1], [0.9, 0.5, 0.1]]))
+        vol = self._make_vol_forms(unit_box, sobolev_space, N=1)[0]
+        pif_a = PathIntegralFunctional(sobolev_space, path_a, n_quad=40)
+        pif_b = PathIntegralFunctional(sobolev_space, path_b, n_quad=80)
+
+        op = SOLAOperator3D(sobolev_space, EuclideanSpace(3), [vol, pif_a, pif_b])
+        with pytest.raises(ValueError, match="n_quad"):
+            op.build_mixed_cache()
+
+
+# ---------------------------------------------------------------------------
+# Fast path for G @ G.adjoint
+# ---------------------------------------------------------------------------
+
+class TestSOLAFastGramComposition:
+    """Tests for the specialized fast path in ``G @ G.adjoint``.
+
+    Covers:
+    - All-volume Lebesgue stacks on BoxDomain.
+    - Mixed volume/path spectral Sobolev stacks.
+    - Strong non-activation when the prerequisites are not satisfied.
+    """
+
+    def test_gram_composition_volume_fast_path_bypasses_from_dual(
+        self, unit_box, space, monkeypatch
+    ):
+        """All-volume BoxDomain case returns the Gram action without from_dual.
+
+        If the fast path were not used, generic ``G @ G.adjoint`` would call
+        ``space.from_dual`` through ``G.adjoint``.  Monkeypatch it to raise and
+        verify the composition still works.
+        """
+        forms = [
+            VolumeKernel3D(space, const_fn(unit_box, 1.0)),
+            VolumeKernel3D(space, linear_fn(unit_box, 0)),
+        ]
+        G = SOLAOperator3D(space, EuclideanSpace(2), forms)
+
+        def _boom(_xp):
+            raise RuntimeError("from_dual should not be called")
+
+        monkeypatch.setattr(space, "from_dual", _boom)
+
+        H = G @ G.adjoint
+        y = np.array([2.0, -1.0])
+        got = H(y)
+
+        gram = np.array([
+            [1.0, 0.5],
+            [0.5, 1.0 / 3.0],
+        ])
+        expected = gram @ y
+        npt.assert_allclose(got, expected, rtol=5e-3, atol=5e-3)
+
+    def test_gram_composition_mixed_spectral_fast_path_bypasses_from_dual(
+        self, unit_box, space, monkeypatch
+    ):
+        """Mixed volume/path spectral case routes to the spectral Gram backend."""
+        from pygeoinf3d.providers.tensor_product import BoxLaplacianSpectrumProvider
+        from pygeoinf3d.operators.bessel_sobolev_box import BesselSobolevBox
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+        from pygeoinf3d.core.paths import Path3D
+        from pygeoinf3d.solvers.spectral_gram import SpectralGramSolver
+
+        provider = BoxLaplacianSpectrumProvider(
+            unit_box, truncation=(4, 4, 4), bc_type="neumann"
+        )
+        W = BesselSobolevBox(space, provider, shift=1.0, order=2.0)
+        W_inv = BesselSobolevBox(space, provider, shift=1.0, order=-2.0)
+        sobolev = Sobolev3D(space, W, W_inv)
+
+        path_a = Path3D.from_polyline(
+            np.array([[0.1, 0.1, 0.1], [0.9, 0.2, 0.2]])
+        )
+        path_b = Path3D.from_polyline(
+            np.array([[0.1, 0.8, 0.3], [0.8, 0.9, 0.7]])
+        )
+        forms = [
+            VolumeKernel3D(sobolev, const_fn(unit_box, 1.0)),
+            PathIntegralFunctional(sobolev, path_a, n_quad=60),
+            VolumeKernel3D(sobolev, linear_fn(unit_box, 0)),
+            PathIntegralFunctional(sobolev, path_b, n_quad=60),
+        ]
+        G = SOLAOperator3D(sobolev, EuclideanSpace(4), forms)
+
+        def _boom(_xp):
+            raise RuntimeError("from_dual should not be called")
+
+        monkeypatch.setattr(sobolev, "from_dual", _boom)
+
+        H = G @ G.adjoint
+        y = np.array([1.0, -2.0, 0.5, 3.0])
+        got = H(y)
+
+        gram = SpectralGramSolver(sobolev, forms).gram_matrix
+        expected = gram @ y
+        npt.assert_allclose(got, expected, rtol=1e-8, atol=1e-12)
+
+    def test_gram_composition_non_spectral_path_stack_does_not_fast_path(
+        self, unit_box, space, monkeypatch
+    ):
+        """Non-spectral Sobolev path stacks must fall back to the generic route."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+        from pygeoinf3d.core.paths import Path3D
+
+        sobolev = _make_sobolev_from_lebesgue(space)
+        path_a = Path3D.from_polyline(
+            np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        )
+        path_b = Path3D.from_polyline(
+            np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        )
+        forms = [
+            PathIntegralFunctional(sobolev, path_a, n_quad=40),
+            PathIntegralFunctional(sobolev, path_b, n_quad=40),
+        ]
+        G = SOLAOperator3D(sobolev, EuclideanSpace(2), forms)
+
+        def _boom(_xp):
+            raise RuntimeError("generic path reached")
+
+        monkeypatch.setattr(sobolev, "from_dual", _boom)
+
+        H = G @ G.adjoint
+        with pytest.raises(RuntimeError, match="generic path reached"):
+            H(np.array([1.0, 2.0]))

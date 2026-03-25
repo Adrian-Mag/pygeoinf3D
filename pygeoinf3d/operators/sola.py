@@ -93,8 +93,9 @@ from typing import Sequence, Union
 
 import numpy as np
 
+from pygeoinf import EuclideanSpace
 from pygeoinf.linear_forms import LinearForm
-from pygeoinf.linear_operators import LinearOperator
+from pygeoinf.linear_operators import LinearOperator, MatrixLinearOperator
 
 from pygeoinf3d.providers.base import KernelProvider3D
 from pygeoinf3d.spaces.lebesgue import Lebesgue3D
@@ -250,6 +251,30 @@ class SOLAOperator3D(LinearOperator):
         # Cache for provider-backed mode; unused in sequence-backed mode.
         self._kernel_cache: dict[int, LinearForm] = {}
 
+        # Volumetric fast-path cache (built lazily via build_vol_cache).
+        self._vol_cache_built: bool = False
+        self._vol_K_w: np.ndarray | None = None
+        self._vol_pts: np.ndarray | None = None
+
+        # Path integral fast-path cache (built lazily via build_path_cache).
+        self._path_cache_built: bool = False
+        self._path_W: np.ndarray | None = None      # (N, n_quad) weight rows
+        self._path_pts: np.ndarray | None = None    # (N * n_quad, 3) stacked pts
+        self._path_n_quad: int = 0
+
+        # Mixed fast-path cache (built lazily via build_mixed_cache).
+        self._mixed_cache_built: bool = False
+        self._mixed_vol_idx: np.ndarray | None = None   # (N_v,) original indices
+        self._mixed_vol_K_w: np.ndarray | None = None   # (N_v, n_vol_pts)
+        self._mixed_vol_pts: np.ndarray | None = None   # (n_vol_pts, 3)
+        self._mixed_path_idx: np.ndarray | None = None  # (N_p,) original indices
+        self._mixed_path_W: np.ndarray | None = None    # (N_p, n_quad)
+        self._mixed_path_pts: np.ndarray | None = None  # (N_p * n_quad, 3)
+        self._mixed_path_n_quad: int = 0
+
+        # Cached fast path for G @ G.adjoint in Euclidean codomain.
+        self._gram_adjoint_operator: MatrixLinearOperator | None = None
+
         super().__init__(
             domain,
             codomain,
@@ -283,6 +308,431 @@ class SOLAOperator3D(LinearOperator):
             self._kernel_cache[i] = self._provider.get_kernel(i)
         return self._kernel_cache[i]
 
+    def _all_kernels(self) -> list[LinearForm]:
+        """Return all realized kernel forms in operator order."""
+        return [self._get_kernel(i) for i in range(self._n_kernels)]
+
+    def _try_build_fast_gram_matrix(self) -> np.ndarray | None:
+        """Return a dense Gram matrix for ``G @ G.adjoint`` when safe.
+
+        Fast path is enabled only in two cases:
+
+          1. ``Sobolev3D`` with spectral ``inverse_weight`` and forms supported
+              by :class:`~pygeoinf3d.solvers.spectral_gram.SpectralGramSolver`
+              (including mixed ``VolumeKernel3D`` +
+              ``PathIntegralFunctional`` stacks).
+          2. ``Lebesgue3D`` with an all-``VolumeKernel3D`` stack on a
+              ``BoxDomain``.
+
+        Returns ``None`` when the operator does not meet these strict criteria,
+        so the generic operator-composition route is used unchanged.
+        """
+        forms = self._all_kernels()
+        if not forms:
+            return None
+
+        from pygeoinf3d.spaces.forms import (
+            PathIntegralFunctional,
+            VolumeKernel3D,
+        )
+
+        # Spectral Sobolev fast path — supports mixed volume/path stacks.
+        if isinstance(self.domain, Sobolev3D):
+            if not all(
+                isinstance(form, (VolumeKernel3D, PathIntegralFunctional))
+                for form in forms
+            ):
+                return None
+            try:
+                from pygeoinf3d.solvers.spectral_gram import SpectralGramSolver
+
+                return SpectralGramSolver(self.domain, forms).gram_matrix
+            except (TypeError, ValueError, AttributeError):
+                return None
+
+        # Structured Lebesgue all-volume fast path.
+        if isinstance(self.domain, Lebesgue3D):
+            if not all(isinstance(form, VolumeKernel3D) for form in forms):
+                return None
+            volume_forms = [
+                form for form in forms if isinstance(form, VolumeKernel3D)
+            ]
+
+            from pygeoinf3d.geometries.box.domain import BoxDomain
+
+            func_domain = self.domain.function_domain
+            if not isinstance(func_domain, BoxDomain):
+                return None
+
+            pts = func_domain.structured_mesh(20, location="cell_centers")
+            weights = func_domain.volume_weights(20, location="cell_centers")
+            K = np.vstack(
+                [
+                    np.asarray(form.kernel(pts), dtype=float).ravel()
+                    for form in volume_forms
+                ]
+            )
+            return (K * weights[None, :]) @ K.T
+
+        return None
+
+    def _try_build_fast_gram_operator(self) -> MatrixLinearOperator | None:
+        """Return cached matrix-backed operator for ``G @ G.adjoint``.
+
+        Returns ``None`` when the strict fast-path conditions are not met.
+        """
+        if self._gram_adjoint_operator is not None:
+            return self._gram_adjoint_operator
+
+        gram = self._try_build_fast_gram_matrix()
+        if gram is None:
+            return None
+
+        # For EuclideanSpace, the standard and Galerkin matrices coincide.
+        op = MatrixLinearOperator(
+            self.codomain,
+            self.codomain,
+            gram,
+            galerkin=True,
+        )
+        self._gram_adjoint_operator = op
+        return op
+
+    def __matmul__(self, other):
+        """Compose operators with a specialized ``G @ G.adjoint`` fast path.
+
+        The fast path is activated only when:
+
+        - ``other`` is exactly the adjoint of ``self`` (checked via
+          ``other._adjoint_base is self``),
+        - the codomain is :class:`~pygeoinf.EuclideanSpace`, and
+        - one of the strict Gram-matrix construction paths succeeds.
+
+        Otherwise this method delegates to the generic
+        :class:`~pygeoinf.LinearOperator` composition implementation.
+        """
+        if (
+            isinstance(other, LinearOperator)
+            and isinstance(self.codomain, EuclideanSpace)
+            and getattr(other, "_adjoint_base", None) is self
+            and other.domain == self.codomain
+            and other.codomain == self.domain
+        ):
+            fast_op = self._try_build_fast_gram_operator()
+            if fast_op is not None:
+                return fast_op
+        return super().__matmul__(other)
+
+    # ------------------------------------------------------------------
+    # Volumetric fast-path cache
+    # ------------------------------------------------------------------
+
+    def build_vol_cache(
+        self,
+        resolution: int = 20,
+        *,
+        location: str = "cell_centers",
+    ) -> None:
+        """Pre-compute the kernel matrix for fast repeated forward evaluations.
+
+        When all forms are :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D`,
+        this method evaluates every kernel on a shared structured quadrature
+        mesh **once** and stores the result as a pre-weighted matrix
+
+        .. math::
+
+            K_w[i, j] = k_i(\\mathbf{x}_j) \\cdot w_j
+
+        of shape ``(n_forms, n_pts)``.  After calling this method every
+        subsequent ``G(f)`` call reduces to:
+
+        .. code-block:: text
+
+            f_vals = f(pts)          # one batch evaluation
+            raw    = K_w @ f_vals   # one matrix-vector product
+
+        instead of ``n_forms`` separate ``∫ k_i · f dV`` integrations each
+        of which would re-evaluate ``k_i`` on the mesh.
+
+        Parameters
+        ----------
+        resolution:
+            Quadrature grid resolution in each dimension (default ``20``,
+            giving a ``20³ = 8000``-point mesh).
+        location:
+            ``'cell_centers'`` (default) or ``'nodes'``.  Passed to
+            :meth:`~pygeoinf3d.geometries.box.domain.BoxDomain.structured_mesh`.
+
+        Raises
+        ------
+        TypeError
+            If any form is not a
+            :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D`.
+        TypeError
+            If the domain's ``function_domain`` is not a
+            :class:`~pygeoinf3d.geometries.box.domain.BoxDomain`.
+
+        Notes
+        -----
+        Quadrature points and weights are fetched from
+        :class:`~pygeoinf3d.geometries.box.domain.BoxDomain`'s own cache
+        (``structured_mesh`` / ``volume_weights``) so there is no extra mesh
+        allocation if the domain was already queried at the same resolution.
+
+        Call ``build_vol_cache`` again with a different *resolution* to
+        replace the existing cache.
+        """
+        from pygeoinf3d.spaces.forms import VolumeKernel3D
+        from pygeoinf3d.geometries.box.domain import BoxDomain
+
+        # Validate that all forms are VolumeKernel3D.
+        for i in range(self._n_kernels):
+            k = self._get_kernel(i)
+            if not isinstance(k, VolumeKernel3D):
+                raise TypeError(
+                    f"build_vol_cache: forms[{i}] is a "
+                    f"{type(k).__name__!r}, not a VolumeKernel3D.  "
+                    "The fast-path cache is only available when all forms "
+                    "are VolumeKernel3D.  Use the standard evaluation path "
+                    "for mixed or PathIntegralFunctional stacks."
+                )
+
+        # Get the BoxDomain for mesh + weights.
+        func_domain = self.domain.function_domain  # type: ignore[attr-defined]
+        if not isinstance(func_domain, BoxDomain):
+            raise TypeError(
+                f"build_vol_cache requires a BoxDomain function_domain; "
+                f"got {type(func_domain).__name__!r}."
+            )
+
+        pts = func_domain.structured_mesh(resolution, location=location)
+        weights = func_domain.volume_weights(resolution, location=location)
+
+        # Evaluate each kernel on the mesh and absorb the quadrature weights.
+        n_pts = pts.shape[0]
+        K_w = np.empty((self._n_kernels, n_pts), dtype=float)
+        for i in range(self._n_kernels):
+            k_vals = np.asarray(
+                self._get_kernel(i).kernel(pts), dtype=float
+            ).ravel()
+            K_w[i, :] = k_vals * weights
+
+        self._vol_K_w = K_w
+        self._vol_pts = pts
+        self._vol_cache_built = True
+
+    def build_path_cache(self) -> None:
+        """Pre-compute stacked quadrature data for fast repeated forward evaluations.
+
+        When all forms are :class:`~pygeoinf3d.spaces.forms.PathIntegralFunctional`
+        with the **same** ``n_quad``, this method stacks every path's cached
+        quadrature points into one array and precomputes the trapezoid weight
+        row for each path.  After calling this method every subsequent ``G(f)``
+        call reduces to:
+
+        .. code-block:: text
+
+            # single vectorised batch eval over all N * n_quad points
+            f_vals_2d = f(all_pts).reshape(N, n_quad)
+            # one element-wise multiply + row sum  (no Python loop, no trapz call)
+            raw = (W * f_vals_2d).sum(axis=1)
+
+        instead of ``N`` separate ``f(pts_i)`` calls each followed by
+        ``np.trapezoid``.
+
+        **Why this is faster:**  The N Python-level function-call dispatches to
+        ``f.__call__`` become one, and the N individual trapezoid contractions
+        become a single NumPy einsum.  The total number of floating-point
+        operations is unchanged; the saving is in Python overhead and cache
+        locality.
+
+        Raises
+        ------
+        TypeError
+            If any form is not a
+            :class:`~pygeoinf3d.spaces.forms.PathIntegralFunctional`.
+        ValueError
+            If the forms do not all share the same ``n_quad``.  Rebuild each
+            form with a uniform ``n_quad`` value to use this cache.
+
+        Notes
+        -----
+        The quadrature weight rows are read directly from each form's
+        ``_quad_weights`` attribute (pre-computed at
+        :class:`~pygeoinf3d.spaces.forms.PathIntegralFunctional` construction
+        time), so ``build_path_cache`` itself performs no arithmetic beyond
+        stacking two matrices.
+
+        Call ``build_path_cache`` again to refresh the cache (e.g. if you
+        replace forms after construction).
+        """
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional
+
+        # Validate: all forms must be PathIntegralFunctional.
+        for i in range(self._n_kernels):
+            k = self._get_kernel(i)
+            if not isinstance(k, PathIntegralFunctional):
+                raise TypeError(
+                    f"build_path_cache: forms[{i}] is a "
+                    f"{type(k).__name__!r}, not a PathIntegralFunctional.  "
+                    "The path fast-path cache requires all forms to be "
+                    "PathIntegralFunctional.  Use build_vol_cache for "
+                    "VolumeKernel3D stacks, or leave the cache unbuilt for "
+                    "mixed stacks."
+                )
+
+        # Validate: uniform n_quad.
+        n_quad_vals = [self._get_kernel(i).n_quad for i in range(self._n_kernels)]
+        if len(set(n_quad_vals)) != 1:
+            raise ValueError(
+                "build_path_cache requires all PathIntegralFunctional forms "
+                f"to share the same n_quad; got distinct values: "
+                f"{sorted(set(n_quad_vals))}.  "
+                "Reconstruct the forms with a uniform n_quad= argument."
+            )
+        n_quad = n_quad_vals[0]
+
+        # Stack all quadrature points and weight rows directly from each form's
+        # pre-computed attributes (set at PathIntegralFunctional construction).
+        all_pts = np.vstack(
+            [self._get_kernel(i)._pts for i in range(self._n_kernels)]
+        )
+        W = np.vstack(
+            [self._get_kernel(i)._quad_weights for i in range(self._n_kernels)]
+        )
+
+        self._path_W = W
+        self._path_pts = all_pts
+        self._path_n_quad = n_quad
+        self._path_cache_built = True
+
+    def build_mixed_cache(self, resolution: int = 20) -> None:
+        """Pre-compute fast-path caches for any mix of volume and path forms.
+
+        Handles stacks that contain **any combination** of
+        :class:`~pygeoinf3d.spaces.forms.VolumeKernel3D` and
+        :class:`~pygeoinf3d.spaces.forms.PathIntegralFunctional` forms —
+        including all-volume and all-path stacks.  This is the recommended
+        single-call alternative to calling :meth:`build_vol_cache` or
+        :meth:`build_path_cache` when the form types are not known in advance.
+
+        **What it precomputes:**
+
+        * **Volume forms** — same as :meth:`build_vol_cache`: a pre-weighted
+          kernel matrix ``K_w[i,j] = k_i(x_j) * w_j`` on a structured mesh.
+        * **Path forms** — same as :meth:`build_path_cache`: stacked
+          quadrature points and trapezoid weight rows.
+
+        **Forward pass after calling this method:**
+
+        .. code-block:: text
+
+            # At most two batch function evaluations:
+            f(vol_pts)           → K_w_vol  @ f_vals_vol   for volume rows
+            f(all_path_pts)      → einsum W for path rows
+            # Results are assembled back in original form order.
+
+        Parameters
+        ----------
+        resolution:
+            Quadrature grid resolution for volume forms (default ``20``,
+            giving ``20³ = 8000`` points).  Ignored if there are no volume
+            forms.
+
+        Raises
+        ------
+        TypeError
+            If any form is neither a ``VolumeKernel3D`` nor a
+            ``PathIntegralFunctional``.
+        TypeError
+            If there are volume forms but the domain's ``function_domain``
+            is not a :class:`~pygeoinf3d.geometries.box.domain.BoxDomain`.
+        ValueError
+            If the path forms do not all share the same ``n_quad``.  Rebuild
+            each path form with a uniform ``n_quad=`` argument.
+
+        Notes
+        -----
+        Call ``build_mixed_cache`` again with a different *resolution* to
+        replace the existing cache.
+        """
+        from pygeoinf3d.spaces.forms import VolumeKernel3D, PathIntegralFunctional
+        from pygeoinf3d.geometries.box.domain import BoxDomain
+
+        # Classify forms into vol / path groups.
+        vol_idx_list: list[int] = []
+        path_idx_list: list[int] = []
+        for i in range(self._n_kernels):
+            k = self._get_kernel(i)
+            if isinstance(k, VolumeKernel3D):
+                vol_idx_list.append(i)
+            elif isinstance(k, PathIntegralFunctional):
+                path_idx_list.append(i)
+            else:
+                raise TypeError(
+                    f"build_mixed_cache: forms[{i}] is a "
+                    f"{type(k).__name__!r}; only VolumeKernel3D and "
+                    "PathIntegralFunctional are supported by this cache."
+                )
+
+        vol_idx = np.array(vol_idx_list, dtype=int)
+        path_idx = np.array(path_idx_list, dtype=int)
+
+        # --- Build volume sub-cache ---
+        if vol_idx.size > 0:
+            func_domain = self.domain.function_domain  # type: ignore[attr-defined]
+            if not isinstance(func_domain, BoxDomain):
+                raise TypeError(
+                    "build_mixed_cache: volume forms require a BoxDomain "
+                    f"function_domain; got {type(func_domain).__name__!r}."
+                )
+            pts_vol = func_domain.structured_mesh(resolution)
+            weights_vol = func_domain.volume_weights(resolution)
+            n_vol_pts = pts_vol.shape[0]
+            K_w = np.empty((vol_idx.size, n_vol_pts), dtype=float)
+            for j, i in enumerate(vol_idx):
+                k_vals = np.asarray(
+                    self._get_kernel(i).kernel(pts_vol), dtype=float
+                ).ravel()
+                K_w[j, :] = k_vals * weights_vol
+        else:
+            pts_vol = None
+            K_w = None
+
+        # --- Build path sub-cache ---
+        if path_idx.size > 0:
+            n_quad_vals = [
+                self._get_kernel(i).n_quad for i in path_idx
+            ]
+            if len(set(n_quad_vals)) != 1:
+                raise ValueError(
+                    "build_mixed_cache: path forms do not all share the same "
+                    f"n_quad; got distinct values: {sorted(set(n_quad_vals))}. "
+                    "Reconstruct the path forms with a uniform n_quad= argument."
+                )
+            n_quad = n_quad_vals[0]
+            all_path_pts = np.vstack(
+                [self._get_kernel(i)._pts for i in path_idx]
+            )
+            # Weight rows come directly from each form's pre-computed attribute.
+            W_path = np.vstack(
+                [self._get_kernel(i)._quad_weights for i in path_idx]
+            )
+        else:
+            all_path_pts = None
+            W_path = None
+            n_quad = 0
+
+        # Store.
+        self._mixed_vol_idx = vol_idx
+        self._mixed_vol_K_w = K_w
+        self._mixed_vol_pts = pts_vol
+        self._mixed_path_idx = path_idx
+        self._mixed_path_W = W_path
+        self._mixed_path_pts = all_path_pts
+        self._mixed_path_n_quad = n_quad
+        self._mixed_cache_built = True
+
     # ------------------------------------------------------------------
     # Internal mappings
     # ------------------------------------------------------------------
@@ -290,7 +740,9 @@ class SOLAOperator3D(LinearOperator):
     def _forward(self, f) -> object:
         """Evaluate each kernel on *f*.
 
-        Return the realised codomain element.
+        Uses the pre-computed volumetric cache (``K_w @ f(pts)``) when
+        :meth:`build_vol_cache` has been called, otherwise falls back to the
+        standard per-form evaluation loop.
 
         Args:
             f: A :class:`~pygeoinf3d.core.functions.Function3D` from the
@@ -301,10 +753,39 @@ class SOLAOperator3D(LinearOperator):
             ``codomain.from_components(raw_components)`` where
             ``raw_components[i] = kernels[i](f)``.
         """
-        raw = np.array(
-            [self._get_kernel(i)(f) for i in range(self._n_kernels)],
-            dtype=float,
-        )
+        if self._vol_cache_built:
+            # Volumetric fast path: single batch eval + matmul.
+            f_vals = np.asarray(f(self._vol_pts), dtype=float).ravel()
+            raw = self._vol_K_w @ f_vals
+        elif self._path_cache_built:
+            # Path fast path: one batch eval over all N*n_quad pts,
+            # then a single einsum contraction (no Python loop, no trapz calls).
+            f_vals_2d = np.asarray(
+                f(self._path_pts), dtype=float
+            ).reshape(self._n_kernels, self._path_n_quad)
+            raw = np.einsum("ij,ij->i", self._path_W, f_vals_2d)
+        elif self._mixed_cache_built:
+            # Mixed fast path: at most two batch function evaluations,
+            # one for volume rows and one for path rows.
+            raw = np.empty(self._n_kernels, dtype=float)
+            if self._mixed_vol_idx.size > 0:
+                f_vals_vol = np.asarray(
+                    f(self._mixed_vol_pts), dtype=float
+                ).ravel()
+                raw[self._mixed_vol_idx] = self._mixed_vol_K_w @ f_vals_vol
+            if self._mixed_path_idx.size > 0:
+                n_path = self._mixed_path_idx.size
+                f_vals_path_2d = np.asarray(
+                    f(self._mixed_path_pts), dtype=float
+                ).reshape(n_path, self._mixed_path_n_quad)
+                raw[self._mixed_path_idx] = np.einsum(
+                    "ij,ij->i", self._mixed_path_W, f_vals_path_2d
+                )
+        else:
+            raw = np.array(
+                [self._get_kernel(i)(f) for i in range(self._n_kernels)],
+                dtype=float,
+            )
         return self.codomain.from_components(raw)
 
     def _dual_mapping(self, yp) -> LinearForm:

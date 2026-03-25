@@ -271,6 +271,69 @@ class TestFastSynthesisGenericForm:
 
 
 # ---------------------------------------------------------------------------
+# TestSumLinearFormSpectralFastPath
+# ---------------------------------------------------------------------------
+
+class TestSumLinearFormSpectralFastPath:
+    """SumLinearForm on a spectral Sobolev3D should use one-shot synthesis.
+
+    These tests exercise the new SumLinearForm fast path in from_dual: instead
+    of recursively constructing and adding representers, the whole sum is
+    treated as one LinearForm and synthesized once through the spectral branch.
+    """
+
+    def test_sum_of_path_forms_matches_manual_loop(
+        self, sobolev_bessel, path_straight, path_diagonal
+    ):
+        """A weighted SumLinearForm of path forms matches the loop reference."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional, SumLinearForm
+
+        form_a = PathIntegralFunctional(sobolev_bessel, path_straight, n_quad=50)
+        form_b = PathIntegralFunctional(sobolev_bessel, path_diagonal, n_quad=50)
+        summed = SumLinearForm(
+            sobolev_bessel,
+            [(1.5, form_a), (-0.25, form_b)],
+        )
+
+        inv_w = sobolev_bessel.inverse_weight
+        n = inv_w.n_modes
+        coeffs_ref = np.array([
+            float(summed(inv_w.get_eigenfunction(k))) for k in range(n)
+        ])
+        nus_ref = np.array([float(inv_w.get_eigenvalue(k)) for k in range(n)])
+        pts = np.array([[0.2, 0.4, 0.6], [0.7, 0.3, 0.5]])
+        ref = _manual_loop_representer(inv_w, coeffs_ref, nus_ref, pts)
+
+        r = sobolev_bessel.from_dual(summed)
+        got = r(pts)
+        npt.assert_allclose(got, ref, rtol=1e-8)
+
+    def test_sum_of_mixed_forms_matches_manual_loop(self, sobolev_bessel, path_straight):
+        """A weighted SumLinearForm mixing path and generic forms is correct."""
+        from pygeoinf3d.spaces.forms import PathIntegralFunctional, SumLinearForm
+
+        path_form = PathIntegralFunctional(sobolev_bessel, path_straight, n_quad=50)
+        point_form = _PointEvalLinearForm(sobolev_bessel, np.array([0.5, 0.5, 0.5]))
+        summed = SumLinearForm(
+            sobolev_bessel,
+            [(2.0, path_form), (0.75, point_form)],
+        )
+
+        inv_w = sobolev_bessel.inverse_weight
+        n = inv_w.n_modes
+        coeffs_ref = np.array([
+            float(summed(inv_w.get_eigenfunction(k))) for k in range(n)
+        ])
+        nus_ref = np.array([float(inv_w.get_eigenvalue(k)) for k in range(n)])
+        pts = np.array([[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]])
+        ref = _manual_loop_representer(inv_w, coeffs_ref, nus_ref, pts)
+
+        r = sobolev_bessel.from_dual(summed)
+        got = r(pts)
+        npt.assert_allclose(got, ref, rtol=1e-8)
+
+
+# ---------------------------------------------------------------------------
 # TestFallbackLoopPath
 # ---------------------------------------------------------------------------
 

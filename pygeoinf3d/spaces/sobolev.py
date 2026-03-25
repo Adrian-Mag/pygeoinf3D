@@ -309,7 +309,7 @@ class Sobolev3D(HilbertSpace):
                 )
             return self._inverse_weight(fp.kernel)
 
-        # ── Branch 2: SumLinearForm (recursive) ─────────────────────────────
+        # ── Branch 2: SumLinearForm ─────────────────────────────────────────
         from pygeoinf3d.spaces.forms import SumLinearForm  # avoid top-level circular
         if isinstance(fp, SumLinearForm):
             if fp.domain is not self:
@@ -318,13 +318,20 @@ class Sobolev3D(HilbertSpace):
                     "this Sobolev3D.  "
                     "Dual elements cannot cross space boundaries."
                 )
-            result = self._base_space.zero
-            for c_i, form_i in fp.terms:
-                r_i = self.from_dual(form_i)
-                result = self._base_space.add(
-                    result, self._base_space.multiply(float(c_i), r_i)
-                )
-            return result
+
+            # Fast path: when inverse_weight is spectral, treat the whole
+            # SumLinearForm as one LinearForm and synthesize a single
+            # representer. This avoids building an O(n_terms)-deep callable
+            # chain via repeated Function3D additions.
+            from pygeoinf3d.operators.base import SpectralOperator3D
+            if not isinstance(self._inverse_weight, SpectralOperator3D):
+                result = self._base_space.zero
+                for c_i, form_i in fp.terms:
+                    r_i = self.from_dual(form_i)
+                    result = self._base_space.add(
+                        result, self._base_space.multiply(float(c_i), r_i)
+                    )
+                return result
 
         # ── Branch 3: General LinearForm (spectral representer) ─────────────
         from pygeoinf import LinearForm as _LinearForm

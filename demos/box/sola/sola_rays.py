@@ -8,6 +8,8 @@ Figure naming convention
 ------------------------
     ray_geometry.html           – Plotly 3D ray/source/station/target scatter
     true_model.html             – z-slider of the true model
+    representers.html           – dropdown of 5 Riesz representers (z-slider)
+    total_sensitivity.html      – z-slider of S(x) = Σ rᵢ(x)
     property_estimate.html      – SOLA mean | 2σ (unconstrained)
     unimodular_mean.html        – unconstrained vs unimodular mean
     unimodular_uncertainty.html – unconstrained vs unimodular 2σ
@@ -40,7 +42,8 @@ import numpy as np  # noqa: E402
 from scipy.interpolate import RegularGridInterpolator  # noqa: E402
 import plotly.graph_objects as go  # noqa: E402
 
-from pygeoinf3d import BoxDomain, Lebesgue3D, Function3D  # noqa: E402
+from pygeoinf3d import BoxDomain, Lebesgue3D, Function3D, SOLAOperator3D  # noqa: E402
+from pygeoinf import EuclideanSpace  # noqa: E402
 from pygeoinf3d.providers.tensor_product import (  # noqa: E402
     BoxLaplacianSpectrumProvider,
 )
@@ -303,6 +306,12 @@ def main():
     forms_T = [VolumeKernel3D(base_space, fp_T.get_function(k)) for k in range(N_p)]
     print(f"  Target forms T : {N_p} VolumeKernel3D on 3×3×3 grid", flush=True)
 
+    # — Wrap forms as LinearOperators (H² → ℝ^N) —
+    D_space = EuclideanSpace(N_d)
+    P_space = EuclideanSpace(N_p)
+    G = SOLAOperator3D(sobolev, D_space, forms_G)   # forward operator
+    T = SOLAOperator3D(sobolev, P_space, forms_T)   # target operator
+
     # --- Step 1: Sobolev representers r_i = W^{-1} ℓ_i^* ---
     print(f"  Computing {N_d} Sobolev representers (this is the bottleneck)...", flush=True)
     representers = []
@@ -316,34 +325,85 @@ def main():
             )
     print(f"  All {N_d} representers done.  [{_fmt_sec(time.time() - t_rep)}]", flush=True)
 
-    # --- Step 2: Gram matrix C_GG[i,j] = ⟨r_i, r_j⟩_{H²} = ℓ_i(r_j) ---
-    print(f"  Computing Gram matrix C_GG ({N_d}×{N_d})...", flush=True)
-    C_GG = np.zeros((N_d, N_d))
-    for i in range(N_d):
-        for j in range(i, N_d):
-            val = forms_G[i](representers[j])
-            C_GG[i, j] = val
-            C_GG[j, i] = val
+    # — Gram matrices via operator application (fast: forms on cached representers) —
+    # G(rⱼ) = [ℓ₁(rⱼ), …, ℓ_Nd(rⱼ)]  :  forward data vector for representer j
+    # T(rⱼ) = [τ₁(rⱼ), …, τ_Np(rⱼ)]  :  target integral vector for representer j
+    print(f"  Computing Gram matrices via G and T operators...", flush=True)
+    C_GG = np.column_stack([G(r) for r in representers])   # Nd × Nd
+    C_TG = np.column_stack([T(r) for r in representers])   # Np × Nd
 
-    sym_err = np.max(np.abs(C_GG - C_GG.T))
-    eigvals_GG = np.linalg.eigvalsh(C_GG)
-    print(f"  C_GG symmetry error : {sym_err:.2e}", flush=True)
-    print(f"  C_GG min eigenvalue : {eigvals_GG.min():.4e}", flush=True)
-    print(f"  C_GG max eigenvalue : {eigvals_GG.max():.4e}", flush=True)
-
-    # --- Step 3: Cross-Gram C_TG[k,i] = ℓ_T_k(r_i) ---
-    print(f"  Computing cross-Gram C_TG ({N_p}×{N_d})...", flush=True)
-    C_TG = np.zeros((N_p, N_d))
-    for k in range(N_p):
-        for i in range(N_d):
-            C_TG[k, i] = forms_T[k](representers[i])
-
-    # --- Step 4: SOLA weights X = C_TG @ (C_GG + C_D)^{-1} ---
-    A = C_GG + C_D
-    X = C_TG @ np.linalg.solve(A, np.eye(N_d))
+    # — SOLA weights:  X = C_TG @ (C_GG + C_D)⁻¹ —
+    A    = C_GG + C_D
+    X    = C_TG @ np.linalg.solve(A, np.eye(N_d))
     cond = np.linalg.cond(A)
     print(f"  SOLA matrix X assembled.  shape: {X.shape}", flush=True)
     print(f"  Condition number of C_GG + C_D : {cond:.2e}", flush=True)
+    print(f"  [elapsed: {_fmt_sec(time.time() - t_sec)}]", flush=True)
+
+    # ===================================================================
+    # 4b. Riesz representers (5 selected rays, dropdown)
+    # ===================================================================
+    t_sec = time.time()
+    print("\n=== 4b. Riesz representers ===", flush=True)
+
+    REP_IDX = [0, 6, 14, 21, 28]
+    rep_fns = [representers[i] for i in REP_IDX]
+
+    def _ray_label(i):
+        src = sources[i]
+        sta = stations[station_idx[i]]
+        return (
+            f"Ray {i}  src=({src[0]:.2f},{src[1]:.2f},{src[2]:.2f})"
+            f" → sta=({sta[0]:.2f},{sta[1]:.2f},{sta[2]:.2f})"
+        )
+
+    rep_labels = [_ray_label(i) for i in REP_IDX]
+    print(f"  Representer indices : {REP_IDX}", flush=True)
+
+    if not no_viz:
+        fig_rep = compare_panels_axis_dropdown_sliders(
+            panel_functions=[rep_fns],
+            panel_labels=[rep_labels],
+            panel_titles=["Riesz representer  r_i = W⁻¹ℓ_i*"],
+            axis="z",
+            n_slices=12,
+            resolution=resolution,
+            show_plot=False,
+        )
+        _save_html(fig_rep, out_dir, "representers.html")
+    print(f"  [elapsed: {_fmt_sec(time.time() - t_sec)}]", flush=True)
+
+    # ===================================================================
+    # 4c. Total sensitivity  S(x) = Σ rᵢ(x)
+    # ===================================================================
+    t_sec = time.time()
+    print("\n=== 4c. Total sensitivity ===", flush=True)
+
+    def _total_sensitivity_eval(x):
+        pts = np.atleast_2d(x)
+        result = np.zeros(len(pts))
+        for r in representers:
+            result += r(pts)
+        if np.ndim(x) == 1:
+            return float(result[0])
+        return result
+
+    total_sensitivity = Function3D(
+        box,
+        evaluate_callable=_total_sensitivity_eval,
+        name="Total sensitivity  S(x) = Σ rᵢ(x)",
+    )
+
+    if not no_viz:
+        fig_sens = plot_function3d_axis_slider(
+            total_sensitivity,
+            axis="z",
+            n_slices=15,
+            resolution=resolution,
+            title="Total sensitivity  S(x) = Σ rᵢ(x)  (z-slider)",
+            show_plot=False,
+        )
+        _save_html(fig_sens, out_dir, "total_sensitivity.html")
     print(f"  [elapsed: {_fmt_sec(time.time() - t_sec)}]", flush=True)
 
     # ===================================================================

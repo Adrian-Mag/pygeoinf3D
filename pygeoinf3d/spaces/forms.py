@@ -18,7 +18,7 @@ Because Python resolves ``self._mapping_impl`` dynamically in
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Sequence, cast
 
 import numpy as np
 
@@ -44,8 +44,9 @@ class VolumeKernel3D(LinearForm):
         \\int_\\Omega f(\\mathbf{x})\\,g(\\mathbf{x})\\,\\mathrm{d}V
 
     where *f* is the :class:`~pygeoinf3d.core.functions.Function3D` kernel.
-    The integral is always computed via ``space.function_domain.integrate_volume``
-    regardless of whether *space* is a ``Lebesgue3D`` or ``Sobolev3D``.
+    The integral is always computed via
+    ``space.function_domain.integrate_volume`` regardless of whether
+    *space* is a ``Lebesgue3D`` or ``Sobolev3D``.
 
     Parameters
     ----------
@@ -65,15 +66,23 @@ class VolumeKernel3D(LinearForm):
     evaluation through its own overridden ``_mapping_impl``.
     """
 
-    def __init__(self, space: "Lebesgue3D", kernel: "Function3D") -> None:
+    def __init__(
+        self,
+        space: "Lebesgue3D | Sobolev3D",
+        kernel: "Function3D",
+    ) -> None:
         if kernel.domain is not space.function_domain:
             raise ValueError(
                 "VolumeKernel3D: kernel.domain does not match "
                 "space.function_domain (identity check).  "
                 "Pass a Function3D built on the same Domain3D instance "
-                "as the Lebesgue3D space."
+                "as the function space."
             )
         self._kernel: "Function3D" = kernel
+        # Cache state — populated by build_cache(); cleared by clear_cache()
+        # and by in-place arithmetic that changes the kernel.
+        self._cache_pts: "np.ndarray | None" = None
+        self._cache_weighted_kernel: "np.ndarray | None" = None
         # Fake empty components so LinearForm.__init__ does NOT call
         # _compute_components (which would try to enumerate basis vectors).
         # The actual evaluation is done by our overridden _mapping_impl.
@@ -107,9 +116,92 @@ class VolumeKernel3D(LinearForm):
     # ------------------------------------------------------------------
 
     def _mapping_impl(self, g: "Function3D") -> float:
-        """Evaluate the pairing ``⟨f, g⟩ = ∫ f(x)·g(x) dV``."""
+        """Evaluate the pairing ``⟨f, g⟩ = ∫ f(x)·g(x) dV``.
+
+        If a cache has been built via :meth:`build_cache`, evaluates *g*
+        at the pre-stored quadrature points and takes a dot product with
+        the pre-weighted kernel values.  Otherwise falls back to
+        ``domain.integrate_volume``.
+        """
+        if (
+            self._cache_pts is not None
+            and self._cache_weighted_kernel is not None
+        ):
+            g_vals = g(self._cache_pts)   # (N,)
+            return float(np.dot(self._cache_weighted_kernel, g_vals))
         domain = self.domain.function_domain  # type: ignore[attr-defined]
         return domain.integrate_volume(self._kernel.pointwise_mul(g))
+
+    # ------------------------------------------------------------------
+    # Explicit cache API
+    # ------------------------------------------------------------------
+
+    @property
+    def cache_built(self) -> bool:
+        """``True`` if a cache has been built via :meth:`build_cache`."""
+        return (
+            self._cache_pts is not None
+            and self._cache_weighted_kernel is not None
+        )
+
+    def build_cache(
+        self,
+        resolution: int = 20,
+        *,
+        location: str = "cell_centers",
+    ) -> None:
+        """Pre-compute cached quadrature points and weighted kernel values.
+
+        After calling this method :meth:`_mapping_impl` evaluates *g* at
+        the cached points and takes a dot product with the pre-weighted
+        kernel values instead of calling ``domain.integrate_volume``.
+        This avoids re-evaluating the kernel callable on every apply.
+
+        The integral approximated is
+
+        .. math::
+
+            \\langle \\phi_f, g \\rangle
+            \\approx \\sum_j f(\\mathbf{x}_j)\\, g(\\mathbf{x}_j)\\, w_j
+
+        where the sum is over the structured quadrature mesh.
+
+        Parameters
+        ----------
+        resolution:
+            Number of quadrature cells per axis (passed to
+            ``domain.structured_mesh``).  Default 20.
+        location:
+            Quadrature point placement.  ``'cell_centers'`` (default) or
+            ``'nodes'``.
+
+        Raises
+        ------
+        TypeError
+            If the underlying domain does not provide ``structured_mesh``
+            and ``volume_weights`` (i.e., is not a structured domain such
+            as :class:`~pygeoinf3d.geometries.box.domain.BoxDomain`).
+        """
+        domain = self.domain.function_domain  # type: ignore[attr-defined]
+        if not (
+            hasattr(domain, "structured_mesh")
+            and hasattr(domain, "volume_weights")
+        ):
+            raise TypeError(
+                f"{type(domain).__name__!r} does not provide structured "
+                "quadrature ('structured_mesh' / 'volume_weights' missing).  "
+                "build_cache requires a structured domain such as BoxDomain."
+            )
+        pts = domain.structured_mesh(resolution, location=location)  # (N, 3)
+        weights = domain.volume_weights(resolution, location=location)  # (N,)
+        k_vals = np.asarray(self._kernel(pts), dtype=float).ravel()  # (N,)
+        self._cache_pts = pts
+        self._cache_weighted_kernel = k_vals * weights                   # (N,)
+
+    def clear_cache(self) -> None:
+        """Discard any cached quadrature state built by :meth:`build_cache`."""
+        self._cache_pts = None
+        self._cache_weighted_kernel = None
 
     # ------------------------------------------------------------------
     # Safe linear-form algebra (override inherited component-based machinery)
@@ -117,13 +209,22 @@ class VolumeKernel3D(LinearForm):
 
     def copy(self) -> "VolumeKernel3D":
         """Return a shallow-callable copy.  Callable is shared (immutable)."""
-        return VolumeKernel3D(self.domain, self._kernel.copy())
+        return VolumeKernel3D(
+            cast("Lebesgue3D | Sobolev3D", self.domain),
+            self._kernel.copy(),
+        )
 
     def __neg__(self) -> "VolumeKernel3D":
-        return VolumeKernel3D(self.domain, -self._kernel)
+        return VolumeKernel3D(
+            cast("Lebesgue3D | Sobolev3D", self.domain),
+            -self._kernel,
+        )
 
     def __mul__(self, a: float) -> "VolumeKernel3D":
-        return VolumeKernel3D(self.domain, float(a) * self._kernel)
+        return VolumeKernel3D(
+            cast("Lebesgue3D | Sobolev3D", self.domain),
+            float(a) * self._kernel,
+        )
 
     def __rmul__(self, a: float) -> "VolumeKernel3D":
         return self.__mul__(a)
@@ -142,7 +243,10 @@ class VolumeKernel3D(LinearForm):
                 "Cannot add VolumeKernel3D objects from different space "
                 "instances (domain identity mismatch)."
             )
-        return VolumeKernel3D(self.domain, self._kernel + other._kernel)
+        return VolumeKernel3D(
+            cast("Lebesgue3D | Sobolev3D", self.domain),
+            self._kernel + other._kernel,
+        )
 
     def __sub__(self, other) -> "VolumeKernel3D":
         if not isinstance(other, VolumeKernel3D):
@@ -158,7 +262,10 @@ class VolumeKernel3D(LinearForm):
                 "from different space instances "
                 "(domain identity mismatch)."
             )
-        return VolumeKernel3D(self.domain, self._kernel - other._kernel)
+        return VolumeKernel3D(
+            cast("Lebesgue3D | Sobolev3D", self.domain),
+            self._kernel - other._kernel,
+        )
 
     # ------------------------------------------------------------------
     # In-place arithmetic — must override LinearForm's component-based
@@ -169,6 +276,7 @@ class VolumeKernel3D(LinearForm):
     def __imul__(self, a: float) -> "VolumeKernel3D":
         """In-place scalar multiplication: self *= a."""
         self._kernel = float(a) * self._kernel
+        self.clear_cache()
         return self
 
     def __iadd__(self, other) -> "VolumeKernel3D":
@@ -185,6 +293,7 @@ class VolumeKernel3D(LinearForm):
                 "space instances (domain identity mismatch)."
             )
         self._kernel = self._kernel + other._kernel
+        self.clear_cache()
         return self
 
     def __isub__(self, other) -> "VolumeKernel3D":
@@ -202,6 +311,7 @@ class VolumeKernel3D(LinearForm):
                 "(domain identity mismatch)."
             )
         self._kernel = self._kernel - other._kernel
+        self.clear_cache()
         return self
 
     # ------------------------------------------------------------------
@@ -305,6 +415,14 @@ class PathIntegralFunctional(LinearForm):
         # Cache quadrature nodes at construction time (path is immutable).
         self._t_arr, self._pts = path.arc_length_nodes(int(n_quad))
         self._eval_scale: float = float(_scale) * path.arclength
+        # Precompute trapezoid weight vector so _mapping_impl is a pure dot.
+        # weights[j] = eval_scale * (dt_{j-1} + dt_j) / 2  (half-steps at ends)
+        _dt = np.diff(self._t_arr)
+        _tw = np.empty(self._n_quad, dtype=float)
+        _tw[0]    = _dt[0] / 2.0
+        _tw[1:-1] = (_dt[:-1] + _dt[1:]) / 2.0
+        _tw[-1]   = _dt[-1] / 2.0
+        self._quad_weights: np.ndarray = self._eval_scale * _tw
         # Bypass component enumeration.
         super().__init__(space, components=np.zeros(0))
 
@@ -333,9 +451,8 @@ class PathIntegralFunctional(LinearForm):
     # ------------------------------------------------------------------
 
     def _mapping_impl(self, g: "Function3D") -> float:
-        """Evaluate ``ℓ_γ(g)`` via composite trapezoidal rule (cached nodes)."""
-        vals = g(self._pts)  # batch call: shape (n_quad,)
-        return self._eval_scale * float(np.trapezoid(vals, self._t_arr))
+        """Evaluate ``ℓ_γ(g)`` via pre-computed quadrature weights (dot product)."""
+        return float(np.dot(self._quad_weights, g(self._pts)))
 
     # ------------------------------------------------------------------
     # Properties
@@ -351,6 +468,21 @@ class PathIntegralFunctional(LinearForm):
     def n_quad(self) -> int:
         """Number of quadrature nodes used in ``_mapping_impl``."""
         return self._n_quad
+
+    @property
+    def quad_weights(self) -> np.ndarray:
+        """Pre-computed quadrature weight vector of shape ``(n_quad,)``.
+
+        Defined as ``eval_scale * trapezoid_weights(t_arr)`` so that
+
+        .. math::
+
+            \\ell_\\gamma(g) = \\mathbf{w}^\\top g(\\mathbf{p})
+
+        is a pure dot product.  Exposed for use by
+        :class:`~pygeoinf3d.operators.sola.SOLAOperator3D` cache methods.
+        """
+        return self._quad_weights
 
     # ------------------------------------------------------------------
     # Linear-form algebra
