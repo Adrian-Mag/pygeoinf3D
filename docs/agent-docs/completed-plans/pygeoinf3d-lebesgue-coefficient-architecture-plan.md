@@ -328,3 +328,7 @@ This work should preserve full compatibility with pygeoinf’s operator machiner
 5. Keep dual bases implicit initially.
 6. Reuse this package structure later for Sobolev-type spaces if and only if the Lebesgue workflow proves stable first.
 7. Treat `EuclideanSpace(dim)` as the algebraic coefficient carrier only; expose the induced Hilbert structure through a metric or mass operator in Phase 2.
+
+---
+**Status: completed** (moved from active-plans during the 2026-07-09 agent-docs revival;
+phase-completion documents exist in completed-plans/ — see files with this plan's prefix).

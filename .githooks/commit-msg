@@ -1,0 +1,31 @@
+#!/bin/sh
+# Agent-docs plan-traceability check (warn-only).
+# Contract: docs/agent-docs/PROTOCOL.md. Activate per clone:
+#   git config core.hooksPath .githooks
+
+msgfile="$1"
+subject=$(head -n1 "$msgfile")
+
+case "$subject" in
+  fixup!*|squash!*|Merge*|Revert*) exit 0 ;;
+  feat*|fix*|refactor*) ;;
+  *) exit 0 ;;
+esac
+
+plan_line=$(grep -E '^Plan:[[:space:]]' "$msgfile" | head -n1)
+if [ -z "$plan_line" ]; then
+  echo "" >&2
+  echo "WARN [agent-docs]: feat/fix/refactor commit without a 'Plan:' trailer." >&2
+  echo "  Subject: $subject" >&2
+  echo "  See docs/agent-docs/PROTOCOL.md. Committing anyway (warn-only)." >&2
+  exit 0
+fi
+
+plan_path=$(echo "$plan_line" | sed 's/^Plan:[[:space:]]*//')
+root=$(git rev-parse --show-toplevel 2>/dev/null)
+if [ -n "$root" ] && [ ! -f "$root/$plan_path" ]; then
+  echo "" >&2
+  echo "WARN [agent-docs]: 'Plan:' trailer points at a missing file: $plan_path" >&2
+  echo "  Committing anyway (warn-only)." >&2
+fi
+exit 0
