@@ -11,7 +11,10 @@ python = ">=3.11"
 numpy = ">=1.26.0"
 scipy = ">=1.16.1"
 matplotlib = ">=3.0.0"
-pygeoinf = { path = "../pygeoinf", develop = true }
+# The function-friendly pygeoinf: branch integration/main (ax/axpy return the updated vector,
+# so Function3D, which cannot be updated in place, works with iterative solvers). It is checked
+# out in the worktree ../pygeoinf-intervalinf-runtime, the same one the inferences env imports.
+pygeoinf = { path = "../pygeoinf-intervalinf-runtime", develop = true }
 
 # Optional geometry extras
 trimesh = { version = ">=4.0.0", optional = true }
