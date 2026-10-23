@@ -275,6 +275,10 @@ class SOLAOperator3D(LinearOperator):
         # Cached fast path for G @ G.adjoint in Euclidean codomain.
         self._gram_adjoint_operator: MatrixLinearOperator | None = None
 
+        # Cache for cross-Gram operators: T @ G.adjoint where T != G.
+        # Key: id(other_sola), value: MatrixLinearOperator(G.codomain, T.codomain, ...).
+        self._cross_gram_cache: dict[int, MatrixLinearOperator] = {}
+
         super().__init__(
             domain,
             codomain,
@@ -376,6 +380,54 @@ class SOLAOperator3D(LinearOperator):
 
         return None
 
+    def _try_build_fast_cross_gram_operator(
+        self, other_sola: "SOLAOperator3D"
+    ) -> MatrixLinearOperator:
+        """Return (cached) cross-Gram operator for ``self @ other_sola.adjoint``.
+
+        Computes :math:`C_{TG} = L_T \\operatorname{diag}(\\nu) L_G^\\top` where
+        :math:`L_T` and :math:`L_G` are the spectral interaction matrices for
+        *self* and *other_sola* respectively, and :math:`\\nu` are the shared
+        inverse-weight eigenvalues.
+
+        The result is cached by ``id(other_sola)``.
+
+        Args:
+            other_sola: The right-hand :class:`SOLAOperator3D` (the "G" in
+                ``T @ G.adjoint``).
+
+        Returns:
+            A :class:`~pygeoinf.linear_operators.MatrixLinearOperator` mapping
+            ``other_sola.codomain → self.codomain`` with ``galerkin=True``.
+
+        Raises:
+            TypeError: If the domain's ``inverse_weight`` is not a
+                :class:`~pygeoinf3d.operators.base.SpectralOperator3D`.
+        """
+        key = id(other_sola)
+        if key in self._cross_gram_cache:
+            return self._cross_gram_cache[key]
+
+        from pygeoinf3d.solvers.spectral_gram import SpectralGramSolver
+
+        forms_self = [self._get_kernel(i) for i in range(self._n_kernels)]
+        forms_other = [other_sola._get_kernel(i) for i in range(other_sola._n_kernels)]
+
+        L_T, nu = SpectralGramSolver._build_L_matrix(self.domain, forms_self)
+        L_G, _ = SpectralGramSolver._build_L_matrix(other_sola.domain, forms_other)
+
+        # C_TG[k, i] = Σ_j L_T[k,j] · ν_j · L_G[i,j]  →  shape (N_p, N_d)
+        C_TG = (L_T * nu[None, :]) @ L_G.T
+
+        op = MatrixLinearOperator(
+            other_sola.codomain,
+            self.codomain,
+            C_TG,
+            galerkin=True,
+        )
+        self._cross_gram_cache[key] = op
+        return op
+
     def _try_build_fast_gram_operator(self) -> MatrixLinearOperator | None:
         """Return cached matrix-backed operator for ``G @ G.adjoint``.
 
@@ -411,16 +463,29 @@ class SOLAOperator3D(LinearOperator):
         Otherwise this method delegates to the generic
         :class:`~pygeoinf.LinearOperator` composition implementation.
         """
-        if (
-            isinstance(other, LinearOperator)
-            and isinstance(self.codomain, EuclideanSpace)
-            and getattr(other, "_adjoint_base", None) is self
-            and other.domain == self.codomain
-            and other.codomain == self.domain
-        ):
-            fast_op = self._try_build_fast_gram_operator()
-            if fast_op is not None:
-                return fast_op
+        if isinstance(other, LinearOperator) and isinstance(self.codomain, EuclideanSpace):
+            adj_base = getattr(other, "_adjoint_base", None)
+
+            # --- Self-Gram fast path: T @ T.adjoint ---
+            if (
+                adj_base is self
+                and other.domain == self.codomain
+                and other.codomain == self.domain
+            ):
+                fast_op = self._try_build_fast_gram_operator()
+                if fast_op is not None:
+                    return fast_op
+
+            # --- Cross-Gram fast path: T @ G.adjoint (G != T, Sobolev3D domain) ---
+            elif (
+                isinstance(adj_base, SOLAOperator3D)
+                and adj_base is not self
+                and isinstance(self.domain, Sobolev3D)
+                and adj_base.domain is self.domain
+                and isinstance(adj_base.codomain, EuclideanSpace)
+            ):
+                return self._try_build_fast_cross_gram_operator(adj_base)
+
         return super().__matmul__(other)
 
     # ------------------------------------------------------------------
@@ -483,9 +548,10 @@ class SOLAOperator3D(LinearOperator):
         replace the existing cache.
         """
         from pygeoinf3d.spaces.forms import VolumeKernel3D
-        from pygeoinf3d.geometries.box.domain import BoxDomain
-
-        # Validate that all forms are VolumeKernel3D.
+        # Validate that all forms are VolumeKernel3D, then delegate
+        # kernel evaluation to each form's own build_cache().
+        # VolumeKernel3D.build_cache raises TypeError if the domain does
+        # not provide structured_mesh / volume_weights.
         for i in range(self._n_kernels):
             k = self._get_kernel(i)
             if not isinstance(k, VolumeKernel3D):
@@ -496,29 +562,14 @@ class SOLAOperator3D(LinearOperator):
                     "are VolumeKernel3D.  Use the standard evaluation path "
                     "for mixed or PathIntegralFunctional stacks."
                 )
+            k.build_cache(resolution, location=location)
 
-        # Get the BoxDomain for mesh + weights.
-        func_domain = self.domain.function_domain  # type: ignore[attr-defined]
-        if not isinstance(func_domain, BoxDomain):
-            raise TypeError(
-                f"build_vol_cache requires a BoxDomain function_domain; "
-                f"got {type(func_domain).__name__!r}."
-            )
-
-        pts = func_domain.structured_mesh(resolution, location=location)
-        weights = func_domain.volume_weights(resolution, location=location)
-
-        # Evaluate each kernel on the mesh and absorb the quadrature weights.
-        n_pts = pts.shape[0]
-        K_w = np.empty((self._n_kernels, n_pts), dtype=float)
-        for i in range(self._n_kernels):
-            k_vals = np.asarray(
-                self._get_kernel(i).kernel(pts), dtype=float
-            ).ravel()
-            K_w[i, :] = k_vals * weights
-
-        self._vol_K_w = K_w
-        self._vol_pts = pts
+        # Assemble the operator-level matrix from per-form cached state.
+        self._vol_K_w = np.vstack(
+            [self._get_kernel(i)._cache_weighted_kernel
+             for i in range(self._n_kernels)]
+        )
+        self._vol_pts = self._get_kernel(0)._cache_pts
         self._vol_cache_built = True
 
     def build_path_cache(self) -> None:
@@ -657,7 +708,6 @@ class SOLAOperator3D(LinearOperator):
         replace the existing cache.
         """
         from pygeoinf3d.spaces.forms import VolumeKernel3D, PathIntegralFunctional
-        from pygeoinf3d.geometries.box.domain import BoxDomain
 
         # Classify forms into vol / path groups.
         vol_idx_list: list[int] = []
@@ -680,21 +730,14 @@ class SOLAOperator3D(LinearOperator):
 
         # --- Build volume sub-cache ---
         if vol_idx.size > 0:
-            func_domain = self.domain.function_domain  # type: ignore[attr-defined]
-            if not isinstance(func_domain, BoxDomain):
-                raise TypeError(
-                    "build_mixed_cache: volume forms require a BoxDomain "
-                    f"function_domain; got {type(func_domain).__name__!r}."
-                )
-            pts_vol = func_domain.structured_mesh(resolution)
-            weights_vol = func_domain.volume_weights(resolution)
-            n_vol_pts = pts_vol.shape[0]
-            K_w = np.empty((vol_idx.size, n_vol_pts), dtype=float)
-            for j, i in enumerate(vol_idx):
-                k_vals = np.asarray(
-                    self._get_kernel(i).kernel(pts_vol), dtype=float
-                ).ravel()
-                K_w[j, :] = k_vals * weights_vol
+            # Delegate to each form's own build_cache().
+            # Raises TypeError if the domain is unstructured.
+            for i in vol_idx:
+                self._get_kernel(i).build_cache(resolution)
+            K_w = np.vstack(
+                [self._get_kernel(i)._cache_weighted_kernel for i in vol_idx]
+            )
+            pts_vol = self._get_kernel(vol_idx[0])._cache_pts
         else:
             pts_vol = None
             K_w = None

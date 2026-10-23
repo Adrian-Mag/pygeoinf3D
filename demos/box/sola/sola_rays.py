@@ -18,7 +18,7 @@ Figure naming convention
 
 Usage
 -----
-    conda activate inferences3
+    conda activate inferences
     python sola_rays.py [--out-dir PATH] [--n-sources N] [--resolution R]
     python sola_rays.py --no-viz          # timing only, skip all figures
 """

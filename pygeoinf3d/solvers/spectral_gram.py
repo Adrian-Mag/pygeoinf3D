@@ -137,21 +137,12 @@ class SpectralGramSolver:
         resolution=20,
     ) -> None:
         from pygeoinf3d.spaces.sobolev import Sobolev3D
-        from pygeoinf3d.operators.base import SpectralOperator3D
 
         if not isinstance(sobolev_space, Sobolev3D):
             raise TypeError(
                 f"Expected Sobolev3D; got {type(sobolev_space).__name__!r}.  "
                 "For general linear forms on Lebesgue3D or non-spectral spaces, "
                 "use SOLAOperator3D instead."
-            )
-        inv_w = sobolev_space.inverse_weight
-        if not isinstance(inv_w, SpectralOperator3D):
-            raise TypeError(
-                "inverse_weight must be a SpectralOperator3D "
-                f"(e.g. BesselSobolevBox); got {type(inv_w).__name__!r}.  "
-                "BesselSobolevBox is the standard choice. "
-                "For non-spectral weights, use SOLAOperator3D."
             )
         if not forms:
             raise ValueError("At least one form is required.")
@@ -179,61 +170,9 @@ class SpectralGramSolver:
         self._forms = list(forms)
         self._m = len(forms)
 
-        # ── Spectral data ───────────────────────────────────────────────
-        provider = inv_w._provider
-        n_modes = provider.dim
-        self._n_modes = n_modes
-
-        # Inverse-weight eigenvalues ν_k = (κ² + λ_k)^{-s/2}
-        self._nu = np.array(
-            [float(inv_w.get_eigenvalue(k)) for k in range(n_modes)]
-        )
-
-        # ── Partition forms by type ─────────────────────────────────────
-        path_indices = [
-            i for i, f in enumerate(self._forms)
-            if isinstance(f, PathIntegralFunctional)
-        ]
-        vol_indices = [
-            i for i, f in enumerate(self._forms)
-            if isinstance(f, VolumeKernel3D)
-        ]
-        path_forms_list = [self._forms[i] for i in path_indices]
-        vol_forms_list = [self._forms[i] for i in vol_indices]
-
-        # ── Build full interaction matrix L[i, k] ──────────────────────
-        self._L = np.empty((self._m, n_modes))
-
-        # Path-form rows: batch trapezoid assembly
-        if path_forms_list:
-            n_quad = path_forms_list[0].n_quad
-            trap_w = np.ones(n_quad)
-            trap_w[0] = 0.5
-            trap_w[-1] = 0.5
-            dt = 1.0 / (n_quad - 1)
-
-            m_path = len(path_forms_list)
-            all_pts = np.empty((m_path, n_quad, 3))
-            scales = np.empty(m_path)
-            for ii, form in enumerate(path_forms_list):
-                _, pts_i = form.path.arc_length_nodes(n_quad)
-                all_pts[ii] = pts_i
-                scales[ii] = form._scale * form.path.arclength * dt
-
-            pts_flat = all_pts.reshape(-1, 3)
-            Phi_flat = provider.evaluate_all_eigenfunctions(pts_flat)
-            Phi = Phi_flat.reshape(n_modes, m_path, n_quad)
-            L_path = np.einsum("kiq,q,i->ik", Phi, trap_w, scales)  # (m_path, N)
-            for ii, gi in enumerate(path_indices):
-                self._L[gi] = L_path[ii]
-
-        # Volume-form rows: quadrature mesh assembly
-        if vol_forms_list:
-            L_vol = self._build_L_volume(
-                vol_forms_list, provider, sobolev_space.function_domain, resolution
-            )  # (m_vol, N)
-            for ii, gi in enumerate(vol_indices):
-                self._L[gi] = L_vol[ii]
+        self._L, self._nu = self._build_L_matrix(sobolev_space, forms, resolution=resolution)
+        self._n_modes = len(self._nu)
+        self._provider = sobolev_space.inverse_weight._provider
 
         # ── Gram matrix ─────────────────────────────────────────────────
         # GG^T = L @ diag(ν) @ L^T
@@ -260,13 +199,77 @@ class SpectralGramSolver:
         self._gram_eigvecs = eigvecs[:, mask]
         self._gram_inv_eigvals = 1.0 / self._gram_eigvals
 
-        # Store provider for representer evaluation
-        self._provider = provider
         self._box = sobolev_space.function_domain
 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_L_matrix(sobolev_space, forms, *, resolution=20):
+        """Return (L, nu) — interaction matrix and inverse-weight eigenvalues."""
+        from pygeoinf3d.operators.base import SpectralOperator3D
+
+        inv_w = sobolev_space.inverse_weight
+        if not isinstance(inv_w, SpectralOperator3D):
+            raise TypeError(
+                "inverse_weight must be a SpectralOperator3D "
+                f"(e.g. BesselSobolevBox); got {type(inv_w).__name__!r}.  "
+                "BesselSobolevBox is the standard choice. "
+                "For non-spectral weights, use SOLAOperator3D."
+            )
+
+        provider = inv_w._provider
+        n_modes = provider.dim
+        nu = np.array([float(inv_w.get_eigenvalue(k)) for k in range(n_modes)])
+
+        path_indices = [i for i, f in enumerate(forms) if isinstance(f, PathIntegralFunctional)]
+        vol_indices = [i for i, f in enumerate(forms) if isinstance(f, VolumeKernel3D)]
+        covered = set(path_indices) | set(vol_indices)
+        unsupported = [type(forms[i]).__name__ for i in range(len(forms)) if i not in covered]
+        if unsupported:
+            raise TypeError(
+                "_build_L_matrix only supports PathIntegralFunctional and VolumeKernel3D forms; "
+                f"got unsupported type(s): {unsupported}.  "
+                "Add support for these form types before using the spectral fast path."
+            )
+
+        path_forms_list = [forms[i] for i in path_indices]
+        vol_forms_list = [forms[i] for i in vol_indices]
+
+        m = len(forms)
+        L = np.empty((m, n_modes))
+
+        if path_forms_list:
+            n_quad = path_forms_list[0].n_quad
+            trap_w = np.ones(n_quad)
+            trap_w[0] = 0.5
+            trap_w[-1] = 0.5
+            dt = 1.0 / (n_quad - 1)
+
+            m_path = len(path_forms_list)
+            all_pts = np.empty((m_path, n_quad, 3))
+            scales = np.empty(m_path)
+            for ii, form in enumerate(path_forms_list):
+                _, pts_i = form.path.arc_length_nodes(n_quad)
+                all_pts[ii] = pts_i
+                scales[ii] = form._scale * form.path.arclength * dt
+
+            pts_flat = all_pts.reshape(-1, 3)
+            Phi_flat = provider.evaluate_all_eigenfunctions(pts_flat)
+            Phi = Phi_flat.reshape(n_modes, m_path, n_quad)
+            L_path = np.einsum("kiq,q,i->ik", Phi, trap_w, scales)
+            for ii, gi in enumerate(path_indices):
+                L[gi] = L_path[ii]
+
+        if vol_forms_list:
+            L_vol = SpectralGramSolver._build_L_volume(
+                vol_forms_list, provider, sobolev_space.function_domain, resolution
+            )
+            for ii, gi in enumerate(vol_indices):
+                L[gi] = L_vol[ii]
+
+        return L, nu
 
     @staticmethod
     def _build_L_volume(

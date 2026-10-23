@@ -17,7 +17,7 @@ Figure naming convention
 
 Usage
 -----
-    conda activate inferences3
+    conda activate inferences
     python sola_noise.py [--out-dir PATH] [--n-slices N] [--resolution R]
 """
 
